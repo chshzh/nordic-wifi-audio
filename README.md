@@ -111,8 +111,46 @@ Follow these steps for a quick standalone setup:
 2. Select the **nRF5340 Audio DK** as the audio output device on the PC and start playback.
 3. Power the Wi-Fi Audio Headset from a 5 V USB supply (for example, a USB-C power bank).
 4. Wait for the headset to auto-join the `GatewayAP` Wi-Fi network; a blinking blue LED indicates active streaming.
-5. Plug your headphones into the headset’s 3.5 mm output. Use the play/pause button to toggle streaming as needed.
+5. Plug your headphones into the headset’s 3.5 mm output. Use the play/pause button to toggle streaming as needed.## Workspace Setup
 
+### Method 1 (Preferred) — Add to an existing NCS installation
+
+If you already have a matching NCS version installed, reuse it directly — no re-downloading required.
+
+Under a terminal with the toolchain:
+
+```sh
+cd /opt/nordic/ncs/<ncs-version>   # your existing NCS workspace root
+
+git clone https://github.com/chshzh/nordic_wifi_opus_audio_demo.git nordic-wifi-audio
+
+# Switch the workspace manifest to nordic-wifi-audio (one-time change)
+west config manifest.path nordic-wifi-audio
+
+# Sync — NCS repos already present, only new project repos are cloned
+west update
+```
+
+> After cloning, initialise the Opus submodule:
+> ```sh
+> cd nordic-wifi-audio/lib/opus && git submodule update --init && git checkout v1.5.2
+> ```
+
+### Method 2 — Fresh installation as a Workspace Application
+
+#### Option A: nRF Connect for VS Code
+
+Follow the [custom repository guide](https://docs.nordicsemi.com/bundle/nrf-connect-vscode/page/guides/extension_custom_repo.html).
+
+#### Option B: CLI
+
+See the Nordic guide on [Workspace Application Setup](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/dev_model_and_contributions/adding_code.html#workflow_4_workspace_application_repository_recommended).
+
+```sh
+west init -m https://github.com/chshzh/nordic_wifi_opus_audio_demo --mr main <workspace-dir>
+cd <workspace-dir>
+west update
+```
 ## ⚙️ Configuration Guide
 
 ### Opus Codec Configuration

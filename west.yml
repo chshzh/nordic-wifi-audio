@@ -2,16 +2,41 @@
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
 
 manifest:
-  self:
-    path: nordic_wifi_opus_audio_demo
+  version: "0.13"
+
+  defaults:
+    remote: ncs
 
   remotes:
     - name: ncs
       url-base: https://github.com/nrfconnect
+    - name: chshzh
+      url-base: https://github.com/chshzh
 
   projects:
-    - name: nrf
-      remote: ncs
-      repo-path: sdk-nrf
-      revision: v3.2.1
+    # NCS v3.3.0 — imports zephyr, bootloader, modules, nrfxlib, tools, etc.
+    - name: sdk-nrf
+      path: nrf
+      revision: v3.3.0
       import: true
+      remote: ncs
+
+    # Common app modules and libraries
+    - name: zego
+      path: zego
+      revision: main
+      remote: chshzh
+
+    # Add more sibling projects as needed:
+    - name: nordic-wifi-webdash
+      path: nordic-wifi-webdash
+      revision: main
+      remote: chshzh
+
+    - name: nordic-wifi-memfault
+      path: nordic-wifi-memfault
+      revision: main
+      remote: chshzh
+
+  self:
+    path: nordic-wifi-audio
