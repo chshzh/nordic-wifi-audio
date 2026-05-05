@@ -58,3 +58,6 @@ dkms.conf
 .vscode/
 .DS_STORE
 .gitnexus
+.claude
+AGENTS.md
+CLAUDE.md
