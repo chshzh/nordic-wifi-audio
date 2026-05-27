@@ -16,6 +16,7 @@ LOG_MODULE_REGISTER(socket_utils, CONFIG_SOCKET_UTILS_LOG_LEVEL);
 #include <zephyr/net/socket.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/conn_mgr_connectivity.h>
+#include <zephyr/posix/arpa/inet.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/net/dns_sd.h>
 #include "socket_utils.h"
