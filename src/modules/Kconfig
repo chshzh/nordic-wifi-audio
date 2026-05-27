@@ -15,7 +15,7 @@ config BUTTON_DEBOUNCE_MS
 config AUDIO_SYNC_TIMER_USES_RTC
 	bool
 	# RTC0 and TIMER1 are only available on nRF53 series; nRF54Lx uses GRTC instead
-	default y if SOC_SERIES_NRF53X
+	default y if SOC_SERIES_NRF53
 	select NRFX_RTC
 	select NRFX_TIMER
 

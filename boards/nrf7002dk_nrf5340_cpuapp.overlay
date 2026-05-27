@@ -1,0 +1,55 @@
+/*
+ * Copyright (c) 2025 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* nRF7002DK has only 2 buttons (sw0, sw1). Map the extra button aliases
+ * required by button_assignments.h to the existing buttons so the
+ * build compiles; at runtime only two physical buttons are usable.
+ */
+/ {
+	aliases {
+		sw2 = &button1;
+		sw3 = &button0;
+		sw4 = &button1;
+	};
+};
+
+/* USB audio headset device node — required by audio_usb.c (DT_NODELABEL(hs_0)) */
+&usbd {
+	hs_0: hs_0 {
+		compatible = "usb-audio-hs";
+		mic-feature-mute;
+		mic-channel-l;
+		mic-channel-r;
+
+		hp-feature-mute;
+		hp-channel-l;
+		hp-channel-r;
+	};
+};
+
+/* Single-image (no MCUboot) partition layout for nRF7002DK (nRF5340, 1 MB flash).
+ * slot0_partition : 0x000000 - 0x0fbfff  (1008 KB, app image)
+ * storage_partition: 0x0fc000 - 0x0fffff  (16 KB, NVS/settings)
+ */
+&flash0 {
+	/delete-node/ partitions;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x0 0xfc000>;
+		};
+
+		storage_partition: partition@fc000 {
+			label = "storage";
+			reg = <0xfc000 0x4000>;
+		};
+	};
+};

@@ -1,0 +1,59 @@
+/*
+ * Copyright (c) 2025 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* nRF54LM20DK has 4 buttons (sw0-sw3), but the nRF7002EB2 shield deletes
+ * button_3 / sw3 due to GPIO pin conflicts. Remap sw3 to button1 and sw4 to
+ * button0 so all aliases resolve to UNIQUE GPIO pins (required to avoid
+ * duplicate case values in main.c's button switch statement).
+ * Only 3 physical buttons are functionally usable.
+ */
+/ {
+	aliases {
+		sw3 = &button1;
+		sw4 = &button0;
+	};
+};
+
+/* USB audio headset device — required by audio_usb.c (DT_NODELABEL(hs_0)).
+ * nRF54LM20DK uses usbhs (USB High-Speed), not usbd.
+ */
+&usbhs {
+	hs_0: hs_0 {
+		compatible = "usb-audio-hs";
+		mic-feature-mute;
+		mic-channel-l;
+		mic-channel-r;
+
+		hp-feature-mute;
+		hp-channel-l;
+		hp-channel-r;
+	};
+};
+
+/* Single-image (no MCUboot) partition layout for nRF54LM20DK (nRF54LM20A RRAM).
+ * nRF54LM20A has 2036 KB RRAM; last 96 KB reserved for FLPR → 1940 KB available.
+ * slot0_partition : 0x000000 - 0x1dcfff  (1908 KB, app image)
+ * storage_partition: 0x1dd000 - 0x1e4fff  (32 KB, NVS/settings)
+ */
+&cpuapp_rram {
+	/delete-node/ partitions;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x0 0x1dd000>;
+		};
+
+		storage_partition: partition@1dd000 {
+			label = "storage";
+			reg = <0x1dd000 0x8000>;
+		};
+	};
+};

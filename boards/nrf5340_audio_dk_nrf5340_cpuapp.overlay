@@ -4,9 +4,34 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-/{
-        gpio_fwd: nrf-gpio-forwarder {
-                compatible = "nordic,nrf-gpio-forwarder";
-                status = "disabled";
-               };
+/ {
+	gpio_fwd: nrf-gpio-forwarder {
+		compatible = "nordic,nrf-gpio-forwarder";
+		status = "disabled";
+	};
+};
+
+/* Override default MCUboot partition table with a single-image (no bootloader)
+ * layout that matches the legacy Partition Manager layout:
+ *   slot0_partition : 0x000000 - 0x0fbfff  (1008 KB, app image)
+ *   storage_partition: 0x0fc000 - 0x0fffff  (16 KB, NVS/settings)
+ */
+&flash0 {
+	/delete-node/ partitions;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x0 0xfc000>;
+		};
+
+		storage_partition: partition@fc000 {
+			label = "storage";
+			reg = <0xfc000 0x4000>;
+		};
+	};
 };

@@ -49,6 +49,8 @@
 typedef void (*i2s_blk_comp_callback_t)(uint32_t frame_start_ts, uint32_t *rx_buf_released,
 					uint32_t const *tx_buf_released);
 
+#if IS_ENABLED(CONFIG_NRFX_I2S)
+
 /**
  * @brief Supply the buffers to be used in the next part of the I2S transfer
  *
@@ -81,5 +83,35 @@ void audio_i2s_blk_comp_cb_register(i2s_blk_comp_callback_t blk_comp_callback);
  * @brief Initialize I2S module
  */
 void audio_i2s_init(void);
+
+#else /* !CONFIG_NRFX_I2S */
+
+/* No-op stubs for SoCs without nrfx_i2s (e.g. nRF54Lx series) */
+static inline void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
+{
+	ARG_UNUSED(tx_buf);
+	ARG_UNUSED(rx_buf);
+}
+
+static inline void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
+{
+	ARG_UNUSED(tx_buf);
+	ARG_UNUSED(rx_buf);
+}
+
+static inline void audio_i2s_stop(void)
+{
+}
+
+static inline void audio_i2s_blk_comp_cb_register(i2s_blk_comp_callback_t blk_comp_callback)
+{
+	ARG_UNUSED(blk_comp_callback);
+}
+
+static inline void audio_i2s_init(void)
+{
+}
+
+#endif /* CONFIG_NRFX_I2S */
 
 #endif /* _AUDIO_I2S_H_ */

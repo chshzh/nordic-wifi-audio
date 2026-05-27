@@ -102,6 +102,7 @@ int nrf5340_audio_dk_init(void)
 		return ret;
 	}
 
+#if IS_ENABLED(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP)
 	ret = board_version_valid_check();
 	if (ret) {
 		return ret;
@@ -111,6 +112,7 @@ int nrf5340_audio_dk_init(void)
 	if (ret) {
 		return ret;
 	}
+#endif /* CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP */
 
 	/* 	if (board_rev.mask & BOARD_VERSION_VALID_MSK_SD_CARD) {
 			ret = sd_card_init();
