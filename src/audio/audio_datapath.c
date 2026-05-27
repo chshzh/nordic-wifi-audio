@@ -211,12 +211,16 @@ static int32_t err_us_calculate(uint32_t sdu_ref_us, uint32_t frame_start_ts_us)
 
 static void hfclkaudio_set(uint16_t freq_value)
 {
+#if NRF_CLOCK_HAS_HFCLKAUDIO
 	uint16_t freq_val = freq_value;
 
 	freq_val = MIN(freq_val, APLL_FREQ_MAX);
 	freq_val = MAX(freq_val, APLL_FREQ_MIN);
 
 	nrfx_clock_hfclkaudio_config_set(freq_val);
+#else
+	(void)freq_value;
+#endif /* NRF_CLOCK_HAS_HFCLKAUDIO */
 }
 
 static void drift_comp_state_set(enum drift_comp_state new_state)

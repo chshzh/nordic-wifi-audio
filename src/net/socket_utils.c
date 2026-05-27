@@ -480,7 +480,7 @@ void socket_utils_thread(void)
 		ret = bind(udp_socket, (struct sockaddr *)&self_addr, sizeof(self_addr));
 		if (ret < 0) {
 			LOG_ERR("bind, error: %d", -errno);
-			close(udp_socket);
+			zsock_close(udp_socket);
 			k_sleep(K_SECONDS(1));
 			continue;
 		}
@@ -531,7 +531,7 @@ void socket_utils_thread(void)
 			LOG_INF("Client disconnected.\n");
 		}
 
-		close(udp_socket);
+		zsock_close(udp_socket);
 		socket_connected_signall = false;
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 		socket_ready = false;
