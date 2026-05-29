@@ -159,6 +159,11 @@ static int dns_sd_discover_gateway(void)
 
 	LOG_INF("PTR query complete: instance=%s", ctx.instance);
 
+	/* Additional records (SRV, TXT, A) from the same mDNS response arrive as
+	 * subsequent callbacks within microseconds. Wait briefly so addr_received
+	 * is set before we decide whether to issue a separate A query. */
+	k_sleep(K_MSEC(50));
+
 	/* Extract hostname from instance name (e.g., "audiogateway" from
 	 * "audiogateway._nrfwifiaudio._udp.local") */
 	const char *dot = strchr(ctx.instance, '.');
@@ -167,30 +172,36 @@ static int dns_sd_discover_gateway(void)
 	memcpy(hostname, ctx.instance, hostname_len);
 	snprintf(hostname + hostname_len, sizeof(hostname) - hostname_len, ".local");
 
-	LOG_INF("Querying A record for: %s", hostname);
-
-	/* Step 2: Resolve A record for the hostname directly */
-	ctx.status = 0;
-	err = dns_get_addr_info(hostname, DNS_QUERY_TYPE_A, &ctx.srv_dns_id, dnssd_service_cb, &ctx,
-				DNS_SD_DISCOVERY_TIMEOUT_MS);
-	if (err < 0) {
-		return err;
-	}
-
-	retries = 5;
-	while (retries-- > 0 && !ctx.addr_received) {
-		err = k_sem_take(&ctx.done, K_MSEC(300));
-		if (err != 0) {
-			break;
-		}
-	}
-
+	/* Step 2: Resolve A record for the hostname directly (skip if already received as
+	 * additional record in the PTR response) */
 	if (!ctx.addr_received) {
-		if (ctx.srv_dns_id != 0U) {
-			(void)dns_cancel_addr_info(ctx.srv_dns_id);
+		LOG_INF("Querying A record for: %s", hostname);
+		ctx.status = 0;
+		err = dns_get_addr_info(hostname, DNS_QUERY_TYPE_A, &ctx.srv_dns_id,
+					dnssd_service_cb, &ctx, DNS_SD_DISCOVERY_TIMEOUT_MS);
+		if (err < 0) {
+			return err;
 		}
-		LOG_ERR("A query for %s failed", hostname);
-		return ctx.status ? ctx.status : -ENOENT;
+
+		retries = 5;
+		while (retries-- > 0 && !ctx.addr_received) {
+			err = k_sem_take(&ctx.done, K_MSEC(300));
+			if (err != 0) {
+				break;
+			}
+		}
+
+		if (!ctx.addr_received) {
+			if (ctx.srv_dns_id != 0U) {
+				(void)dns_cancel_addr_info(ctx.srv_dns_id);
+			}
+			LOG_ERR("A query for %s failed", hostname);
+			return ctx.status ? ctx.status : -ENOENT;
+		}
+	} else {
+		LOG_INF("A record already received from PTR response: %d.%d.%d.%d",
+			ctx.addr.s4_addr[0], ctx.addr.s4_addr[1], ctx.addr.s4_addr[2],
+			ctx.addr.s4_addr[3]);
 	}
 
 	LOG_INF("Resolved gateway: %d.%d.%d.%d:%u", ctx.addr.s4_addr[0], ctx.addr.s4_addr[1],
