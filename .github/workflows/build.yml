@@ -91,6 +91,23 @@ jobs:
         run: |
           west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d ${{ matrix.config.build_dir }} -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="${{ matrix.config.overlay }}"
 
+      - name: Collect merged hex for ${{ matrix.config.name }}
+        if: always()
+        working-directory: app-workspace/nordic_wifi_opus_audio_demo
+        run: |
+          BUILD_DIR="${{ matrix.config.build_dir }}"
+          APP_HEX="${BUILD_DIR}/merged_nrf5340_audio_dk_nrf5340_cpuapp.hex"
+          NET_HEX="${BUILD_DIR}/merged_nrf5340_audio_dk_nrf5340_cpunet.hex"
+          if [ -f "${APP_HEX}" ] && [ -f "${NET_HEX}" ]; then
+            python3 -c "import sys; from intelhex import IntelHex; a=IntelHex(); a.loadhex(sys.argv[1]); n=IntelHex(); n.loadhex(sys.argv[2]); a.merge(n,overlap='replace'); a.write_hex_file(sys.argv[3])" "${APP_HEX}" "${NET_HEX}" "${BUILD_DIR}/merged.hex"
+            echo "Combined app+net → merged.hex"
+          elif [ -f "${APP_HEX}" ]; then
+            cp "${APP_HEX}" "${BUILD_DIR}/merged.hex"
+            echo "Collected ${APP_HEX}"
+          else
+            echo "Warning: ${APP_HEX} not found"
+          fi
+
       - name: Upload build artifacts for ${{ matrix.config.name }}
         uses: actions/upload-artifact@v4
         if: always()
