@@ -6,6 +6,24 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+# Register zego bricks: button, led, wifi, network, memonitor.
+# Use ZEPHYR_BASE (set by zephyr-env.sh) to locate the NCS workspace root.
+# This is robust for both normal checkouts and git worktrees (which have a
+# different CMAKE_CURRENT_SOURCE_DIR depth).
+get_filename_component(_NCS_ROOT "$ENV{ZEPHYR_BASE}/.." ABSOLUTE)
+get_filename_component(ZEGO_BUTTON_DIR    "${_NCS_ROOT}/zego/bricks/button"    REALPATH)
+get_filename_component(ZEGO_LED_DIR       "${_NCS_ROOT}/zego/bricks/led"       REALPATH)
+get_filename_component(ZEGO_WIFI_DIR      "${_NCS_ROOT}/zego/bricks/wifi"      REALPATH)
+get_filename_component(ZEGO_NETWORK_DIR   "${_NCS_ROOT}/zego/bricks/network"   REALPATH)
+get_filename_component(ZEGO_MEMONITOR_DIR "${_NCS_ROOT}/zego/bricks/memonitor" REALPATH)
+list(APPEND EXTRA_ZEPHYR_MODULES
+  ${ZEGO_BUTTON_DIR}
+  ${ZEGO_LED_DIR}
+  ${ZEGO_WIFI_DIR}
+  ${ZEGO_NETWORK_DIR}
+  ${ZEGO_MEMONITOR_DIR}
+)
+
 # Flag which defines whether application is compiled as gateway/dongle or headset
 add_compile_definitions(HEADSET=1)
 add_compile_definitions(GATEWAY=2)
@@ -57,6 +75,10 @@ add_subdirectory(src/drivers)
 add_subdirectory(src/modules)
 add_subdirectory(src/utils)
 add_subdirectory(src/debug)
+
+# zego-brick app modules (added in refactor Step 3.2)
+target_sources(app PRIVATE src/modules/network/net_event_app.c)
+add_subdirectory(src/modules/ux)
 
 ## Cirrus Logic
 if (CONFIG_HW_CODEC_CIRRUS_LOGIC)
