@@ -1,20 +1,20 @@
-# Diagnostics Module Spec
+# Diagnostics Module Spec - nordic-wifi-audio
 
 ## Document Information
 
-| Field          | Value                                                                            |
-|----------------|----------------------------------------------------------------------------------|
-| Project        | Nordic Wi-Fi Audio Demo                                                          |
-| Version        | 2026-06-22-15-18                                                                 |
-| PRD Version    | 2026-06-22-15-18                                                                 |
-| NCS Version    | v3.3.0                                                                           |
-| Target Board(s)| Board-agnostic (kernel-only, no hardware peripherals)                            |
-| Status         | In Review                                                                        |
+| Field | Value |
+|---|---|
+| Project | Nordic Wi-Fi Audio Demo |
+| Version | 2026-06-22-15-18 |
+| PRD Version | 2026-06-22-15-18 |
+| NCS Version | v3.3.0 |
+| Target Board(s) | Board-agnostic (kernel-only, no hardware peripherals) |
+| Status | In Review |
 
 ## Changelog
 
-| Version          | Summary of changes                                         |
-|------------------|------------------------------------------------------------|
+| Version | Summary of changes |
+|---|---|
 | 2026-06-22-15-18 | Initial spec: memonitor brick consumption + status shell command |
 
 ---
@@ -25,9 +25,9 @@ Memory and thread diagnostics are provided by the `zego/memonitor` brick, which
 replaces the custom `src/debug/heaps_monitor.c`. The app adds a thin `status` shell
 command that reads the memonitor cache and prints a formatted report.
 
-| Component              | Role                                                    |
-|------------------------|---------------------------------------------------------|
-| `zego/bricks/memonitor`| Periodic heap/stack watermark sampler, MEMONITOR_CHAN   |
+| Component | Role |
+|---|---|
+| `zego/bricks/memonitor` | Periodic heap/stack watermark sampler, MEMONITOR_CHAN |
 | `status` shell command | Reads cache via `memonitor_get_heaps/threads()`; prints |
 
 ---
@@ -82,24 +82,24 @@ SHELL_CMD_REGISTER(status, NULL, "Print memory/thread diagnostics", cmd_status);
 
 ## Zbus Integration
 
-| Channel          | Direction  | Notes                                         |
-|------------------|------------|-----------------------------------------------|
+| Channel | Direction | Notes |
+|---|---|---|
 | `MEMONITOR_CHAN` | Subscribe (implicit) | Subscriber can use channel as a "snapshot ready" notification; data read via API |
 
 ---
 
 ## Kconfig Flags
 
-| Symbol                              | Description                                    | Default |
-|-------------------------------------|------------------------------------------------|---------|
-| `CONFIG_ZEGO_MEMONITOR`             | Enable memonitor brick                         | y       |
-| `CONFIG_ZEGO_MEMONITOR_INTERVAL_MS` | Sampling interval (ms)                         | 5000    |
-| `CONFIG_ZEGO_MEMONITOR_HEAP_MONITOR`| Sample heaps (requires `SYS_HEAP_RUNTIME_STATS`)| y      |
-| `CONFIG_ZEGO_MEMONITOR_THREAD_MONITOR` | Sample threads (requires `INIT_STACKS`)     | y       |
-| `CONFIG_ZEGO_MEMONITOR_ZVIEW`       | Auto-select ZView Kconfig deps                 | y       |
-| `CONFIG_ZEGO_MEMONITOR_LOG_PERIODIC`| Log to UART on each sample (flash-expensive)   | n       |
-| `CONFIG_INIT_STACKS`                | Fill stacks with 0xaa (required for HWM)       | y       |
-| `CONFIG_STACK_SENTINEL`             | **Must be n** — sentinel overwrites 0xaa fill  | n       |
+| Symbol | Description | Default |
+|---|---|---|
+| `CONFIG_ZEGO_MEMONITOR` | Enable memonitor brick | y |
+| `CONFIG_ZEGO_MEMONITOR_INTERVAL_MS` | Sampling interval (ms) | 5000 |
+| `CONFIG_ZEGO_MEMONITOR_HEAP_MONITOR` | Sample heaps (requires `SYS_HEAP_RUNTIME_STATS`) | y |
+| `CONFIG_ZEGO_MEMONITOR_THREAD_MONITOR` | Sample threads (requires `INIT_STACKS`) | y |
+| `CONFIG_ZEGO_MEMONITOR_ZVIEW` | Auto-select ZView Kconfig deps | y |
+| `CONFIG_ZEGO_MEMONITOR_LOG_PERIODIC` | Log to UART on each sample (flash-expensive) | n |
+| `CONFIG_INIT_STACKS` | Fill stacks with 0xaa (required for HWM) | y |
+| `CONFIG_STACK_SENTINEL` | **Must be n** — sentinel overwrites 0xaa fill | n |
 
 ---
 
@@ -113,7 +113,7 @@ SHELL_CMD_REGISTER(status, NULL, "Print memory/thread diagnostics", cmd_status);
 
 ## Test Points
 
-| UART log string                              | Expected condition                       |
-|----------------------------------------------|------------------------------------------|
-| `[memonitor] Heap: _system_heap free=...`    | Logged if `CONFIG_ZEGO_MEMONITOR_LOG_PERIODIC=y` |
-| `status` shell output: heap and thread table | `status` shell command executed          |
+| UART log string | Expected condition |
+|---|---|
+| `[memonitor] Heap: _system_heap free=...` | Logged if `CONFIG_ZEGO_MEMONITOR_LOG_PERIODIC=y` |
+| `status` shell output: heap and thread table | `status` shell command executed |

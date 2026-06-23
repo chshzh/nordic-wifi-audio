@@ -1,19 +1,19 @@
-# Mode Selector Spec [RETIRED]
+# Mode Selector Spec [RETIRED] - nordic-wifi-audio
 
 ## Document Information
 
-| Field          | Value                                                                            |
-|----------------|----------------------------------------------------------------------------------|
-| Project        | Nordic Wi-Fi Audio Demo                                                          |
-| Version        | 2026-06-22-15-18                                                                 |
-| PRD Version    | 2026-06-22-15-18                                                                 |
-| NCS Version    | v3.3.0                                                                           |
-| Status         | Retired                                                                          |
+| Field | Value |
+|---|---|
+| Project | Nordic Wi-Fi Audio Demo |
+| Version | 2026-06-22-15-18 |
+| PRD Version | 2026-06-22-15-18 |
+| NCS Version | v3.3.0 |
+| Status | Retired |
 
 ## Changelog
 
-| Version          | Summary of changes                                                              |
-|------------------|---------------------------------------------------------------------------------|
+| Version | Summary of changes |
+|---|---|
 | 2026-06-22-15-18 | Created as tombstone: custom mode_selector was never implemented; mode persistence is owned by zego/wifi brick |
 
 ---
@@ -49,10 +49,10 @@ See `docs/dev-specs/ui-module.md` for the ux module spec.
 
 ### Default Modes
 
-| Role    | Default mode    | Kconfig                                  |
-|---------|-----------------|------------------------------------------|
-| Gateway | `P2P_GO`        | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO=y` |
-| Headset | `P2P_CLIENT`    | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_CLIENT=y` |
+| Role | Default mode | Kconfig |
+|---|---|---|
+| Gateway | `P2P_GO` | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO=y` |
+| Headset | `P2P_CLIENT` | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_CLIENT=y` |
 
 STA mode is selected either by long-press mode cycle or by a build overlay
 (e.g., `overlay-sta.conf` setting `CONFIG_ZEGO_WIFI_DEFAULT_MODE_STA=y`).

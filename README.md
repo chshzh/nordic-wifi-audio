@@ -1,128 +1,208 @@
-# Nordic Wi-Fi Opus Audio Demo
+# Nordic Wi-Fi Audio
 
-[![Build and Test Wi-Fi Opus Audio Demo](https://github.com/chshzh/nordic_wifi_opus_audio_demo/actions/workflows/build.yml/badge.svg)](https://github.com/chshzh/nordic_wifi_opus_audio_demo/actions/workflows/build.yml)
-[![License](https://img.shields.io/badge/License-LicenseRef--Nordic--5--Clause-blue.svg)](LICENSE)
-[![NCS Version](https://img.shields.io/badge/NCS-v3.2.1-green.svg)](https://www.nordicsemi.com/Products/Development-software/nRF-Connect-SDK)
-![Nordic Semiconductor](https://img.shields.io/badge/Nordic%20Semiconductor-nRF7002EK-blue)
-![Nordic Semiconductor](https://img.shields.io/badge/Nordic%20Semiconductor-nRF5340_Audio_DK-red)
+[![Build](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/build.yml/badge.svg)](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/chshzh/nordic-wifi-audio?label=Release&color=skyblue)](https://github.com/chshzh/nordic-wifi-audio/releases/latest)
 
 
-## 🔍 Overview
+## Project Overview
 
-This project demonstrates how to use Wi-Fi with UDP sockets for real-time audio streaming. It is designed to showcase low-latency audio transfer, utilizing the nRF5340 Audio DK and nRF7002 EK platforms. This sample also integrates the Opus codec for efficient audio compression and decompression, offering flexibility for various network conditions.
+### Introduction
 
-## 🎯 Key Features
+`nordic-wifi-audio` is a real-time Wi-Fi audio streaming demo for nRF7x development kits. It targets embedded developers and audio engineers who need a low-latency wireless audio link — no Bluetooth stack, no router required in the default P2P mode. The firmware ships in two roles: an **Audio Gateway** that captures audio from USB or LINE IN and transmits over UDP, and an **Audio Headset** that receives the stream and drives the codec output.
 
-- **Real-time Audio Streaming**: Low-latency audio transfer over Wi-Fi networks
-- **Opus Codec Integration**: Efficient audio compression with configurable bitrates (6kbps to 320kbps)
-- **Low-Latency Transport**: Optimized UDP socket pipeline for audio streaming
-- **Multiple Wi-Fi Modes**: Station mode with credential shell/static configuration and SoftAP mode for gateway-led pairing
-- **Dual Device Setup**: Audio Gateway and Headset device roles
-- **Battery Power Support**: Optional battery operation for headset device
-- **Gateway Auto Discovery**: Gateway advertises audio service via DNS-SD (mDNS responder) for automatic audio gateway discovery on local networks.
+### Supported hardware
 
-## 🔧 Hardware Requirements
+| Board | Build target | Notes |
+|-------|--------------|-------|
+| nRF5340 Audio DK + nRF7002EK | `nrf5340_audio_dk/nrf5340/cpuapp` + `-DSHIELD=nrf7002ek` | Gateway + Headset (P0) |
+| nRF7002DK | `nrf7002dk/nrf5340/cpuapp` | Gateway only (P1) |
+| nRF54LM20DK + nRF7002EB2 | `nrf54lm20dk/nrf54lm20a/cpuapp` + `-DSHIELD=nrf7002eb2` | Gateway only (P1) |
 
-### Essential Hardware
-**HW:** 
-- **nRF5340 Audio DK x 2** (Audio Gateway and Headset)
-- **nRF7002EK x 2** (Plug in nRF5340 Audio DK as shield to support Wi-Fi)
-- **USB C cable x 2**
-- **Earphones/Headphones** with 3.5mm jack
-- **Cable with Double 3.5mm jack Male Header(Optional)** 
+### Features
 
+- **Wi-Fi P2P audio link (default)** — device boots into Wi-Fi Direct P2P_GO / P2P_CLIENT mode; no router or credentials needed on first boot.
+- **STA mode support** — join an existing Wi-Fi network for integration into home or studio setups.
+- **Dual device roles** — Gateway (audio source, UDP server) and Headset (audio sink, UDP client); role selected at build time.
+- **Raw PCM streaming** — low-latency uncompressed 16-bit PCM over UDP with no codec overhead in the default build.
+- **Opus codec option** — add `overlay-opus.conf` for compressed streaming with configurable bitrate (STA mode only; mutually exclusive with P2P on nRF5340).
+- **USB audio source** — Gateway appears as a USB sound card on the host PC; set it as the output device and any audio plays wirelessly.
+- **LINE IN source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
+- **Runtime mode switching** — Button 0 long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
+- **Visual status feedback** — LED rotates while connecting, solid ON during active audio link, fast blink on error.
+- **Startup banner** — prints firmware version, board, role, Wi-Fi mode, and connection instructions at every boot.
 
-### Optional Hardware Modifications for Wi-Fi Audio Headset Device
-- **Enable Battery Power**: Connect nRF7002EK V5V pin to nRF5340 Audio DK TP30 testpoint.
-- **Copy Audio Channel**: The device HW codec can only decode one channel from sound source, short nRF5340 Audio DK P14 pin1 and pin2 to output it on both headphone output channels.
-- **Audio input through LINE IN** Get audio input through LINE IN. Need to add "overlay-gateway-linein.conf" when build audio gateway firmware.
+### Target Users
 
-The following picture shows a setup where the Audio Gateway (top) device uses LINE IN as the audio source.
-![wifi audio setup](photo/wifi_audio_setup.jpg)
+- **Evaluator** — grab a pre-built `.hex` from the [Releases](https://github.com/chshzh/nordic-wifi-audio/releases/latest) page, flash it, and follow the [Evaluator Quick Start](#evaluator-quick-start) guide.
+- **Developer** — clone the workspace, build from source, and customise the firmware; see [Developer Guide](#developer-guide) for build setup and [Documentation](#documentation) for product requirements, architecture, and per-module specs.
 
-### Software Requirements
-**SW:** 
-- **NCS v3.2.1** - Nordic Connect SDK
-- **Opus v1.5.2** - Audio codec library
+---
 
-## 🚀 Quick Start Guide
+## Evaluator Quick Start
 
-### 1. Repository Setup
+### Step 1 — Flash the firmware
 
-```bash
-git clone https://github.com/chshzh/nordic_wifi_opus_audio_demo.git
-cd nordic_wifi_opus_audio_demo/lib/opus
-git submodule update --init
-git checkout v1.5.2
-```
+Download the pre-built `.hex` for your board and role from the [Releases](https://github.com/chshzh/nordic-wifi-audio/releases/latest) page:
 
-### 2. Build and Flash Firmware
+| Board | Role | File |
+|-------|------|------|
+| nRF5340 Audio DK + nRF7002EK | Gateway | `nordic-wifi-audio-gateway-nrf5340-audio-dk-<version>.hex` |
+| nRF5340 Audio DK + nRF7002EK | Headset | `nordic-wifi-audio-headset-nrf5340-audio-dk-<version>.hex` |
+| nRF7002DK | Gateway | `nordic-wifi-audio-gateway-nrf7002dk-<version>.hex` |
+| nRF54LM20DK + nRF7002EB2 | Gateway | `nordic-wifi-audio-gateway-nrf54lm20dk-<version>.hex` |
 
-**Gateway Device:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf"
-west flash --erase -d build_opus_gateway
-```
-
-**Gateway Device (SoftAP auto-pairing with LINE IN input):**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway_softap_linein -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf;overlay-gateway-softap.conf;overlay-gateway-linein.conf"
-west flash --erase -d build_opus_gateway_softap_linein
-```
-
-**Headset Device:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_headset -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-headset.conf"
-west flash --erase -d build_opus_headset
-```
-
-### 3. Connect and Configure Wi-Fi
-
-Use the Wi-Fi credentials shell on the gateway device:
-```
-uart:~$ wifi cred add -s wifi_ssid -p wifi_password -k 1
-uart:~$ wifi cred auto_connect
-```
-
-> **Tip:** When the gateway firmware includes `overlay-gateway-softap.conf`, it hosts the `GatewayAP` network and the headset auto-discovers the fixed target at `192.168.1.1`—no Wi-Fi shell configuration required.
-
-### 4. Start Audio Streaming
-
-1. Set audio gateway as output device on your PC
-2. Connect headphones to the headset device
-3. Press play/pause on headset device to start/stop streaming
-4. Use VOL+/- buttons to adjust volume
-
-### 5. SoftAP Direct Audio Link (Gateway ↔ Headset)
-
-When you build the gateway with `overlay-gateway-softap.conf`, the two audio DKs can form a self-contained Wi-Fi link without an external router. The diagram below shows the wiring and roles:
-
-```
-[Wi-Fi Audio Gateway (nRF5340 + nRF7002)] <--Wi-Fi--> [Wi-Fi Audio Headset (nRF5340 + nRF7002)] ──USB-C── [5 V Power Bank]
-        ▲                                              │
-        │ USB-C Audio and Power                        │ 3.5 mm Audio Out
-        │                                              ▼
-      [Windows PC]                                   [Headphones]
-```
-
-Follow these steps for a quick standalone setup:
-
-1. Connect the Wi-Fi Audio Gateway to a Windows PC with a USB-C cable; the board powers up and enumerates as a USB sound card.
-2. Select the **nRF5340 Audio DK** as the audio output device on the PC and start playback.
-3. Power the Wi-Fi Audio Headset from a 5 V USB supply (for example, a USB-C power bank).
-4. Wait for the headset to auto-join the `GatewayAP` Wi-Fi network; a blinking blue LED indicates active streaming.
-5. Plug your headphones into the headset’s 3.5 mm output. Use the play/pause button to toggle streaming as needed.## Workspace Setup
-
-### Method 1 (Preferred) — Add to an existing NCS installation
-
-If you already have a matching NCS version installed, reuse it directly — no re-downloading required.
-
-Under a terminal with the toolchain:
+Flash using **nRF Connect for Desktop → Programmer** (Erase & Write), or via CLI:
 
 ```sh
-cd /opt/nordic/ncs/<ncs-version>   # your existing NCS workspace root
+nrfutil device program --firmware nordic-wifi-audio-<role>-<board>-<version>.hex --verify
+```
 
-git clone https://github.com/chshzh/nordic_wifi_opus_audio_demo.git nordic-wifi-audio
+> **Two-device setup:** Flash one nRF5340 Audio DK as Gateway and a second as Headset. Both boot into P2P mode — Gateway starts as P2P_GO and Headset as P2P_CLIENT. They pair automatically using the static P2P link (`192.168.7.1` Gateway / `192.168.7.2` Headset).
+
+### Step 2 — Verify
+
+**1. UART log** — open a serial terminal at 115200 baud:
+
+| Board | Port | Baud |
+|-------|------|------|
+| nRF5340 Audio DK + nRF7002EK | VCOM0 (`/dev/tty.usbmodem*1`) | 115200 |
+| nRF7002DK | VCOM1 (`/dev/tty.usbmodem*3`) | 115200 |
+| nRF54LM20DK + nRF7002EB2 | VCOM0 (`/dev/tty.usbmodem*1`) | 115200 |
+
+At boot you will see a startup banner:
+
+```
+*** nordic-wifi-audio-gateway v3.3.0.1 | NCS v3.3.0 ***
+Board: nrf5340_audio_dk  MAC: AA:BB:CC:DD:EE:FF
+Mode: P2P_GO  |  Modules: [wifi] [network] [ux] [button] [led]
+P2P_GO: DIRECT-xx started — Headset will auto-connect via static P2P link
+```
+
+LED 0 begins rotating. Mode-specific connection:
+
+- **P2P mode** (default on fresh flash): Gateway boots as P2P_GO; Headset boots as P2P_CLIENT. They pair automatically — wait for both to log `Audio stream READY` and LED 0 to go solid ON.
+- **STA mode**: run `wifi cred add -s <SSID> -p <pass> -k 1` then `wifi cred auto_connect` on both devices; both join the same AP; wait for `Audio stream READY`.
+
+**2. Buttons & LEDs**
+
+### Buttons
+
+| Board | Button | Gesture | Action |
+|-------|--------|---------|--------|
+| nRF5340 Audio DK + nRF7002EK | VOL- / sw0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_CLIENT); save to NVS; reboot |
+| | VOL+ / sw1 (idx 1) | Single click | Volume Up (Headset only) |
+| | PLAY/PAUSE / sw2 (idx 2) | Single click | Start / stop audio stream |
+| | sw3 (idx 3) | Single click | Test tone trigger |
+| nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode; save to NVS; reboot |
+| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode; save to NVS; reboot |
+
+### LEDs
+
+LED 0 reflects the Wi-Fi / audio link state. All other LEDs are available for application use.
+
+| State | Effect |
+|-------|--------|
+| Boot / connecting | ROTATE |
+| Audio link active | Solid ON |
+| Disconnected / error | Fast BLINK (100 ms half-period) |
+
+**3. Application logic**
+
+Once both devices have an audio link, set the **nRF5340 Audio DK Gateway** as the audio output device on your PC. Press PLAY/PAUSE on the Headset to start streaming — audio plays through the headphones connected to the Headset's 3.5 mm output.
+
+---
+
+## Developer Guide
+
+### Project Structure
+
+```text
+nordic-wifi-audio/
+├── CMakeLists.txt                ← registers zego bricks; sets role-specific ZEGO_BANNER_APP_NAME
+├── Kconfig / Kconfig.defaults    ← project Kconfig
+├── Kconfig.sysbuild
+├── prj.conf                      ← base Kconfig configuration
+├── sysbuild.conf                 ← SB_CONFIG_PARTITION_MANAGER=n; SB_CONFIG_WIFI_NRF70=y
+├── overlay-audio-gateway.conf    ← gateway role (CONFIG_AUDIO_GATEWAY=y)
+├── overlay-audio-headset.conf    ← headset role (CONFIG_AUDIO_HEADSET=y)
+├── overlay-opus.conf             ← Opus codec (STA mode only; mutually exclusive with P2P)
+├── overlay-gateway-linein.conf   ← LINE IN audio input on nRF5340 Audio DK
+├── overlay-sta.conf              ← STA mode with credential placeholders
+├── overlay-wifi-cred-static.conf ← static Wi-Fi credentials
+├── boards/
+│   ├── nrf5340_audio_dk_nrf5340_cpuapp.conf    ← Audio DK Kconfig (LOG_BUFFER_SIZE=4096)
+│   ├── nrf5340_audio_dk_nrf5340_cpuapp.overlay ← DTS: nRF7002EK SPI pinout; partition layout
+│   ├── nrf7002dk_nrf5340_cpuapp.conf
+│   ├── nrf7002dk_nrf5340_cpuapp.overlay         ← DTS: button aliases; USB audio node; partitions
+│   ├── nrf54lm20dk_nrf54lm20a_cpuapp.conf
+│   └── nrf54lm20dk_nrf54lm20a_cpuapp.overlay    ← DTS: button aliases; USB audio node; RRAM partitions
+├── docs/
+│   ├── pm-prd/PRD.md             ← Product Requirements Document
+│   └── dev-specs/
+│       ├── 0-overview.md         ← Start here — spec index, PRD-to-spec mapping
+│       ├── 1-architecture.md     ← Module map, Zbus channels, threads, boot sequence
+│       ├── 2-dts-partition.md    ← Flash partition layout per board
+│       ├── 3-memopt.md           ← Memory budget and optimization report
+│       ├── audio-pipeline.md     ← Audio encode/decode datapath spec
+│       ├── network-module.md     ← zego-network weak-hook consumption
+│       ├── ui-module.md          ← Button gestures, LED state machine
+│       ├── board-init-module.md  ← Multi-board hardware abstraction
+│       └── diagnostics-module.md ← memonitor brick + status shell
+├── lib/
+│   ├── opus/                     ← Opus codec submodule
+│   └── opus_interface/           ← Opus encoder/decoder wrapper
+├── src/
+│   ├── audio/                    ← audio_system, audio_datapath, sw_codec, wifi_audio_rx
+│   ├── modules/
+│   │   ├── network/net_event_app.c ← Wi-Fi event hooks → audio start/stop
+│   │   ├── ux/ux.c               ← button gestures + LED state machine
+│   │   ├── audio_i2s.c/h         ← I2S PCM driver (nRF53 only)
+│   │   ├── audio_usb.c/h         ← USB audio class
+│   │   ├── hw_codec.c/h          ← CS47L63 codec (nRF5340 Audio DK)
+│   │   └── sd_card*.c/h          ← SD card playback
+│   ├── utils/                    ← board init, UICR, board_version, channel_assignment
+│   └── drivers/cs47l63_comm.c    ← CS47L63 SPI driver
+├── wifi_audio_gateway/main.c     ← gateway entry point
+└── wifi_audio_headset/main.c     ← headset entry point
+```
+
+External zego bricks (referenced via `EXTRA_ZEPHYR_MODULES` in `CMakeLists.txt`):
+
+```text
+../zego/bricks/wifi/      ← Wi-Fi mode selector, NVS persistence, ZEGO_BANNER_APP_NAME
+../zego/bricks/network/   ← Wi-Fi event dispatcher, DHCP handling, zego_on_net_event_* callbacks
+../zego/bricks/button/    ← GPIO debounce, BUTTON_CHAN publish
+../zego/bricks/led/       ← LED_CMD_CHAN subscriber, ROTATE/BLINK/BREATHE effects
+../zego/bricks/memonitor/ ← heap and thread-stack HWM sampling, MEMONITOR_CHAN
+```
+
+### Workspace Setup
+
+West workspace is driven by [west.yml](west.yml), which pins the NCS version this application is based on:
+
+```sh
+- name: sdk-nrf
+  path: nrf
+  revision: v3.3.0
+  import: true
+  remote: ncs
+```
+
+Release versions follow the NCS version with a build counter suffix: `v<ncs-version>.<build>` (e.g. `v3.3.0.1`, `v3.3.0.2`). The major/minor/patch components always match the NCS version the firmware is based on.
+
+Use nRF Connect for VS Code or a shell initialized with the NCS toolchain.
+
+#### Method 1 (Preferred) — Add to an existing NCS installation
+
+If you already have NCS v3.3.0 installed, reuse it directly — no re-downloading required.
+
+```sh
+cd /opt/nordic/ncs/v3.3.0   # your existing NCS workspace root
+
+git clone https://github.com/chshzh/nordic-wifi-audio
 
 # Switch the workspace manifest to nordic-wifi-audio (one-time change)
 west config manifest.path nordic-wifi-audio
@@ -131,211 +211,139 @@ west config manifest.path nordic-wifi-audio
 west update
 ```
 
-> After cloning, initialise the Opus submodule:
-> ```sh
-> cd nordic-wifi-audio/lib/opus && git submodule update --init && git checkout v1.5.2
-> ```
+#### Method 2 — Fresh installation as a Workspace Application
 
-### Method 2 — Fresh installation as a Workspace Application
-
-#### Option A: nRF Connect for VS Code
+##### Option A: nRF Connect for VS Code
 
 Follow the [custom repository guide](https://docs.nordicsemi.com/bundle/nrf-connect-vscode/page/guides/extension_custom_repo.html).
 
-#### Option B: CLI
-
-See the Nordic guide on [Workspace Application Setup](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/dev_model_and_contributions/adding_code.html#workflow_4_workspace_application_repository_recommended).
+##### Option B: CLI
 
 ```sh
-west init -m https://github.com/chshzh/nordic_wifi_opus_audio_demo --mr main <workspace-dir>
+west init -m https://github.com/chshzh/nordic-wifi-audio --mr main <workspace-dir>
 cd <workspace-dir>
 west update
 ```
-## ⚙️ Configuration Guide
 
-### Opus Codec Configuration
+See the Nordic guide on [Workspace Application Setup](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/dev_model_and_contributions/adding_code.html#workflow_4_workspace_application_repository_recommended) for details.
 
-Fine-tune audio quality and performance by adjusting Opus codec parameters:
+### Build
 
-| **Parameter**       | **Description**                                    | **Default Value**      | **Notes**                                                   |
-|---------------------|----------------------------------------------------|-------------------------|------------------------------------------------------------|
-| `Bitrate`           | Controls the quality and bandwidth usage.          | 320kbps       | Higher bitrate improves quality but increases CPU usage and frame encoding time.    |
-| `Frame Size`        | Duration of each audio frame in milliseconds.      | 10ms                     | Smaller frames reduce latency but increase overhead.        |
-| `Complexity`        | Encoding complexity level (0-10).                  | 0                        | Lower values reduce CPU usage; higher values improve quality. |
-| `Application`       | Optimization mode (VoIP, Audio, or Automatic).     | `OPUS_APPLICATION_AUDIO` | Choose based on use case (e.g., VoIP for voice).            |
-| `Packet Loss (%)`   | Expected network packet loss rate.                 | 15%                      | Enables PLC (Packet Loss Concealment) to improve stability. |
-| `VBR`               | Variable Bitrate mode (enabled/disabled).          | Disabled                 | Dynamically adjusts bitrate for better network adaptation.  |
+```sh
+# Go to app root first
+cd nordic-wifi-audio
 
-### Build Configuration Options
+# Gateway — nRF5340 Audio DK + nRF7002EK (P2P default)
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-gateway.conf" \
+  -Dnordic-wifi-audio_SNIPPET=wifi-p2p
 
-The sample supports multiple build configurations through overlay files:
+# Gateway — nRF7002DK
+west build -p -b nrf7002dk/nrf5340/cpuapp -d build_gateway_nrf7002dk -- \
+  -DEXTRA_CONF_FILE="overlay-audio-gateway.conf" \
+  -Dnordic-wifi-audio_SNIPPET=wifi-p2p
 
-- **`overlay-opus.conf`** - Enable Opus codec support, otherwise raw PCM data.
-- **`overlay-audio-gateway.conf`** - Configure device as audio gateway
-- **`overlay-audio-headset.conf`** - Configure device as audio headset
-- **`overlay-gateway-softap.conf`** - Enable gateway SoftAP mode with static 192.168.1.1 service
-- **`overlay-wifi-sta-static.conf`** - Use static Wi-Fi credentials
-- **`overlay-gateway-linein.conf`** - Enable gateway device to use LINE IN as audio input instead of USB
+# Gateway — nRF54LM20DK + nRF7002EB2
+west build -p -b nrf54lm20dk/nrf54lm20a/cpuapp -d build_gateway_nrf54lm20dk -- \
+  -DSHIELD=nrf7002eb2 -DEXTRA_CONF_FILE="overlay-audio-gateway.conf" \
+  -Dnordic-wifi-audio_SNIPPET=wifi-p2p
 
-## 📋 Building
-
-Here are some building examples:
-
-### WiFi Station Mode + WiFi CREDENTIALS SHELL (for SSID+Password Input) + UDP + Opus Audio
-> ⚠️ Recommended, you can download the following three firmware from release page.
-
-**Gateway USB Audio Source:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf"
-west flash --erase -d build_opus_gateway
+# Headset — nRF5340 Audio DK + nRF7002EK only
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-headset.conf" \
+  -Dnordic-wifi-audio_SNIPPET=wifi-p2p
 ```
 
-**Gateway SoftAP USB Audio Source (auto-connects headset, fixed 192.168.1.1):**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway_softap -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf;overlay-gateway-softap.conf"
-west flash --erase -d build_opus_gateway_softap
+> The image-scoped `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` applies the snippet only to the app image (not to `hci_ipc`), avoiding spurious Kconfig warnings on the net core. The snippet adds `CONFIG_WIFI_NM_WPA_SUPPLICANT_P2P=y` and `CONFIG_NRF70_P2P_MODE=y`. Without it, P2P modes are unavailable at runtime.
+
+#### Feature Overlay Builds
+
+| Overlay / Option | Purpose |
+|---------|---------|
+| `overlay-opus.conf` | Opus codec (STA mode only; mutually exclusive with P2P on nRF5340) |
+| `overlay-gateway-linein.conf` | LINE IN audio input on nRF5340 Audio DK |
+| `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` | Enables P2P Wi-Fi Direct (required for default P2P mode) |
+| `overlay-sta.conf` | STA mode with credential placeholders |
+
+> **Opus and P2P are mutually exclusive** on nRF5340 Audio DK — both features together exceed the 1 MB flash budget. Use one or the other, not both.
+
+**Example — Gateway with Opus codec + LINE IN (STA mode, no P2P snippet):**
+
+```sh
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_opus_linein -- \
+  -DSHIELD=nrf7002ek \
+  -DEXTRA_CONF_FILE="overlay-audio-gateway.conf;overlay-opus.conf;overlay-gateway-linein.conf"
 ```
 
-**Gateway LINE IN Audio Source:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf;overlay-gateway-linein.conf"
-west flash --erase -d build_opus_gateway
+### Flash
+
+First-time flash (erases NVS — Wi-Fi credentials and mode must be re-entered after):
+
+```sh
+west flash -d build_gateway_nrf5340audiodk --erase   # nRF5340 Audio DK gateway
+west flash -d build_gateway_nrf7002dk --erase        # nRF7002DK gateway
+west flash -d build_gateway_nrf54lm20dk --recover    # nRF54LM20DK gateway
+west flash -d build_headset_nrf5340audiodk --erase   # nRF5340 Audio DK headset
 ```
 
-**Gateway SoftAP LINE IN Audio Source (auto-connects headset):**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_gateway_softap_linein -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-gateway.conf;overlay-gateway-softap.conf;overlay-gateway-linein.conf"
-west flash --erase -d build_opus_gateway_softap_linein
+Subsequent flashes (preserves NVS — mode and credentials survive):
+
+```sh
+west flash -d build_gateway_nrf5340audiodk
+west flash -d build_gateway_nrf7002dk
+west flash -d build_gateway_nrf54lm20dk
+west flash -d build_headset_nrf5340audiodk
 ```
 
-**Headset:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_opus_headset -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-opus.conf;overlay-audio-headset.conf"
-west flash --erase -d build_opus_headset
-```
+### Developer Notes
 
-### WiFi Station Mode + WiFi CREDENTIALS SHELL (for SSID+Password Input) + UDP + Raw PCM Audio
+- **Default mode on fresh flash is P2P_GO (Gateway) / P2P_CLIENT (Headset).** No credentials needed — the two devices form a direct Wi-Fi link at `192.168.7.1` (Gateway) / `192.168.7.2` (Headset). The current mode is printed in the startup banner.
+- **Headset role is nRF5340 Audio DK only.** The nRF7002DK and nRF54LM20DK boards support the Gateway role only.
+- **Opus and P2P are mutually exclusive on nRF5340 Audio DK.** The nRF5340 has 1 MB flash; enabling both `overlay-opus.conf` and the `wifi-p2p` snippet together overflows the budget. Pick one: Opus (STA mode) or P2P (raw PCM).
+- **Two separate entry points:** `wifi_audio_gateway/main.c` (Gateway) and `wifi_audio_headset/main.c` (Headset). The role is selected by the overlay at build time via `CONFIG_AUDIO_GATEWAY` / `CONFIG_AUDIO_HEADSET`.
+- **`CONFIG_LOG_BUFFER_SIZE=4096`** is set in `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`. The default 1 KB ring buffer is too small for the boot banner; without this increase, early log lines are silently overwritten.
+- **NVS erase resets mode to P2P_GO.** `--erase` (nRF7002DK / nRF5340 Audio DK) and `--recover` (nRF54LM20DK) wipe NVS — the device wakes in P2P_GO mode after next flash.
+- **Module specs** for non-obvious behavior: [audio-pipeline.md](docs/dev-specs/audio-pipeline.md), [network-module.md](docs/dev-specs/network-module.md), [ui-module.md](docs/dev-specs/ui-module.md).
 
-**Gateway:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-audio-gateway.conf"
-west flash --erase -d build_gateway
-```
-**Headset:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-audio-headset.conf"
-west flash --erase -d build_headset
-```
+---
 
-### 🔒 WiFi Station Mode + Static SSID & PASSWORD + UDP + Opus Audio
+## Documentation
 
-**Gateway:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_static_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-wifi-sta-static.conf;overlay-audio-gateway.conf"
-west flash --erase -d build_static_gateway
+The full design documentation lives under `docs/`. Start with [docs/dev-specs/0-overview.md](docs/dev-specs/0-overview.md), which maps every PRD requirement to the spec file that implements it and provides an architecture summary.
 
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_static_opus_gateway -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-wifi-sta-static.conf;overlay-opus.conf;overlay-audio-gateway.conf"
-west flash --erase -d build_static_opus_gateway
-```
+| Document | Description |
+|---|---|
+| [docs/pm-prd/PRD.md](docs/pm-prd/PRD.md) | Product Requirements — user-perspective features, behavior, acceptance criteria, changelog |
+| [docs/dev-specs/0-overview.md](docs/dev-specs/0-overview.md) | **Start here** — spec index, PRD-to-spec mapping, architecture summary, design decisions |
+| [docs/dev-specs/1-architecture.md](docs/dev-specs/1-architecture.md) | Module map, Zbus channels, SYS_INIT boot sequence, thread budget |
+| [docs/dev-specs/2-dts-partition.md](docs/dev-specs/2-dts-partition.md) | Flash partition layout per board |
+| [docs/dev-specs/3-memopt.md](docs/dev-specs/3-memopt.md) | Memory budget and optimization report |
+| [docs/dev-specs/audio-pipeline.md](docs/dev-specs/audio-pipeline.md) | Audio encode/decode datapath spec |
+| [docs/dev-specs/network-module.md](docs/dev-specs/network-module.md) | Wi-Fi event hooks — zego-network consumption |
+| [docs/dev-specs/ui-module.md](docs/dev-specs/ui-module.md) | Button gestures and LED state machine |
+| [docs/dev-specs/board-init-module.md](docs/dev-specs/board-init-module.md) | Multi-board hardware abstraction |
+| [zego/bricks/wifi ↗](https://github.com/chshzh/zego) | Wi-Fi mode selector, NVS persistence, `ZEGO_BANNER_APP_NAME` |
+| [zego/bricks/network ↗](https://github.com/chshzh/zego) | Wi-Fi event dispatcher, DHCP handling, weak-hook callbacks |
+| [zego/bricks/button ↗](https://github.com/chshzh/zego) | GPIO debounce, BUTTON_CHAN publish |
+| [zego/bricks/led ↗](https://github.com/chshzh/zego) | LED_CMD_CHAN subscriber, ROTATE/BLINK/BREATHE effects |
 
-**Headset:**
-```bash
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_static_headset -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-wifi-sta-static.conf;overlay-audio-headset.conf"
-west flash --erase -d build_static_headset
+---
 
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_static_opus_headset -- -DSHIELD="nrf7002ek" -DEXTRA_CONF_FILE="overlay-wifi-sta-static.conf;overlay-audio-headset.conf;overlay-opus.conf"
-west flash --erase -d build_static_opus_headset
-```
+## Methodology
 
-### Building configuration example for nRF Connect SDK VS code extension
+This project was developed using the [chsh-sk-ncs-0-workflow skill](https://github.com/chshzh/claude/blob/main/skills/chsh-sk-ncs-0-workflow/SKILL.md) — a four-phase lifecycle for NCS/Zephyr IoT projects where each phase has a dedicated AI skill:
 
-![building configuration example](photo/building_configuration.png)
+| Phase | Focus | Skill | Output |
+|-------|-------|-------|--------|
+| 1 — Product Definition | What the device should do, for whom, and why | `chsh-sk-ncs-1-prd` | `docs/pm-prd/PRD.md` |
+| 2 — Technical Design | Translate PRD into engineering specs | `chsh-sk-ncs-2-spec` | `docs/dev-specs/*.md` |
+| 3 — Implementation | Implement, debug, and optimise code from approved specs | `chsh-sk-ncs-3.1-coding` · `chsh-sk-ncs-3.2-debug` · `chsh-sk-ncs-3.3-memopt` | `src/`, passing build |
+| 4 — V&V | Verify code quality (no HW), then validate on hardware against PRD criteria | `chsh-sk-ncs-4.1-verification` · `chsh-sk-ncs-4.2-validation` | `docs/qa-test/VERIFICATION-*.md` + `docs/qa-test/VALIDATION_REPORT.md` |
 
-## 🎮 Operation Guide
+Each phase feeds the next: requirements drive specs, specs drive code, code drives tests. Issues loop back to the right phase — code bugs to Phase 3, spec gaps to Phase 2, new requirements to Phase 1.
 
-### WiFi CREDENTIALS SHELL Example (Station Mode)
+---
 
-#### 1) Connect WiFi Gateway and Audio Devices with WiFi Router
+## License
 
-```
-uart:~$ wifi cred
-wifi cred - Wi-Fi Credentials commands
-Subcommands:
-  add           : Add network to storage.
-                  <-s --ssid "<SSID>">: SSID.
-                  [-c --channel]: Channel that needs to be scanned for
-                  connection. 0:any channel.
-                  [-b, --band] 0: any band (2:2.4GHz, 5:5GHz, 6:6GHz]
-                  [-p, --passphrase]: Passphrase (valid only for secure SSIDs)
-                  [-k, --key-mgmt]: Key Management type (valid only for secure
-                  SSIDs)
-                  0:None, 1:WPA2-PSK, 2:WPA2-PSK-256, 3:SAE-HNP, 4:SAE-H2E,
-                  5:SAE-AUTO, 6:WAPI, 7:EAP-TLS, 8:WEP, 9: WPA-PSK, 10:
-                  WPA-Auto-Personal, 11: DPP
-                  [-w, --ieee-80211w]: MFP (optional: needs security type to be
-                  specified)
-                  : 0:Disable, 1:Optional, 2:Required.
-                  [-m, --bssid]: MAC address of the AP (BSSID).
-                  [-t, --timeout]: Timeout for the connection attempt (in
-                  seconds).
-                  [-a, --identity]: Identity for enterprise mode.
-                  [-K, --key-passwd]: Private key passwd for enterprise mode.
-                  [-h, --help]: Print out the help for the connect command.
-
-  auto_connect  : Connect to any stored network.
-  delete        : Delete network from storage.
-  list          : List stored networks.
-  
-uart:~$ wifi cred add -s wifi_ssid -p wifi_password -k 1
-uart:~$ wifi cred auto_connect
-```
-
-The device will remember this set of credential and autoconnect to target router after reset.
-
-#### 2) Set Audio Gateway as Output on PC and Start Audio Streaming
-
-After socket connection is established:
-1. Make sure your host PC chooses **nRF5340 USB Audio (audio gateway)** as audio output device
-2. Press **play/pause** on headset device to start/stop audio streaming
-3. Use **VOL+/-** buttons to adjust volume
-
-## 🚦 LED Status Indicators
-
-The device provides multiple LED indicators for comprehensive visual feedback about device type, network status, and streaming activity:
-
-### Device Type Indicators (APP RGB LED)
-
-| **LED Color** | **Device Type** | **Description** |
-|---------------|-----------------|-----------------|
-| **🟢 Green** | Audio Gateway | Device configured as audio gateway |
-| **🔵 Blue** | Headset Left Channel | Headset device configured for left audio channel |
-| **🟣 Magenta** | Headset Right Channel | Headset device configured for right audio channel |
-
-### Network Status Indicators (Network RGB LED)
-
-| **LED Color** | **Network Status** | **Description** |
-|---------------|-------------------|-----------------|
-| **🔴 Red** | Network Disconnected | Wi-Fi connection lost or not established |
-| **🟢 Green** | Network Connected | Wi-Fi connected and ready for streaming |
-
-### Streaming Activity Indicators (Blue LED)
-
-| **LED Behavior** | **Streaming Status** | **Description** |
-|------------------|---------------------|-----------------|
-| **🔵 Blinking Blue** | Audio Streaming | Audio is actively streaming between devices |
-| **🔵 Solid Blue** | Audio Paused | Audio streaming is paused but ready to resume |
-| **💡 Off** | Audio Stopped | No audio streaming activity |
-
-##  License
-
-This project is licensed under the LicenseRef-Nordic-5-Clause license. See the `LICENSE` file for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please ensure all code follows the Zephyr coding style and includes appropriate license headers.
-
-## 📞 Support
-
-For questions and support:
-- [Nordic DevZone](https://devzone.nordicsemi.com/)
-- [GitHub Issues](https://github.com/your-repo/nordic_wifi_opus_audio_demo/issues)
+[SPDX-License-Identifier: LicenseRef-Nordic-5-Clause](LICENSE)

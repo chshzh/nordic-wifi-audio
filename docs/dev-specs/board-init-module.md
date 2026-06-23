@@ -1,22 +1,23 @@
-# Board Init Module Spec
+# Board Init Module Spec - nordic-wifi-audio
 
 ## Document Information
 
-| Field          | Value                                                                            |
-|----------------|----------------------------------------------------------------------------------|
-| Project        | Nordic Wi-Fi Audio Demo                                                          |
-| Version        | 2026-06-22-15-18                                                                 |
-| PRD Version    | 2026-06-22-15-18                                                                 |
-| NCS Version    | v3.3.0                                                                           |
-| Target Board(s)| nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
-| Status         | In Review                                                                        |
+| Field | Value |
+|---|---|
+| Project | Nordic Wi-Fi Audio Demo |
+| Version | 2026-06-23-14-27 |
+| PRD Version | 2026-06-23-14-27 |
+| NCS Version | v3.3.0 |
+| Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
+| Status | In Review |
 
 ## Changelog
 
-| Version          | Summary of changes                                                              |
-|------------------|---------------------------------------------------------------------------------|
+| Version | Summary of changes |
+|---|---|
+| 2026-06-23-14-27 | Synced to PRD v2026-06-23-14-27: nRF7002DK + nRF54LM20DK promoted to P1 (gateway only); ZEGO_BANNER_APP_NAME set per role in CMakeLists.txt (`nordic-wifi-audio-gateway` / `nordic-wifi-audio-headset`); CONFIG_LOG_BUFFER_SIZE=4096 added to nRF5340 Audio DK board conf |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added per-board zego button/LED Kconfig, noted deferred USB-audio boards, nrf54l_init.c simplified (bricks own GPIO) |
-| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)                                 |
+| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
 
 ---
 
@@ -26,20 +27,20 @@ This module provides multi-board hardware abstraction for initialization,
 persistent storage (UICR), board version detection, and optional audio I/O
 hardware (CS47L63 codec, I2S, USB audio, SD card).
 
-| File                         | Board(s)          | Role                                           |
-|------------------------------|-------------------|------------------------------------------------|
-| `src/utils/nrf5340_audio_dk.c` | nRF53-based     | Full board init: NVMC, clock divider, board_version ADC |
-| `src/utils/nrf54l_init.c`    | nRF54LM20A        | Minimal init: LEDs + buttons (no NVMC, no clock divider) |
-| `src/utils/uicr.c`           | nRF53-based       | UICR channel read/write via `nrfx_nvmc`        |
-| `src/utils/uicr_stub.c`      | non-nRF53         | No-op UICR stubs (returns 0)                   |
-| `src/utils/board_version.c`  | nRF5340 Audio DK  | ADC-based board version detection              |
-| `src/modules/audio_i2s.c`    | nRF53 (I2S)       | I2S PCM audio driver wrapper                   |
-| `src/modules/audio_usb.c`    | All boards        | USB audio class (CDC + headset composite)      |
-| `src/modules/hw_codec.c`     | nRF5340 Audio DK  | CS47L63 codec volume/routing control           |
-| `src/drivers/cs47l63_comm.c` | nRF5340 Audio DK  | CS47L63 SPI communication driver               |
-| `src/modules/sd_card.c`      | nRF5340 Audio DK  | SD card FAT filesystem access                  |
-| `src/modules/sd_card_playback.c` | nRF5340 Audio DK | WAV file playback thread                    |
-| `src/modules/audio_sync_timer.c` | nRF53         | RTC0-based audio sync timer                    |
+| File | Board(s) | Role |
+|---|---|---|
+| `src/utils/nrf5340_audio_dk.c` | nRF53-based | Full board init: NVMC, clock divider, board_version ADC |
+| `src/utils/nrf54l_init.c` | nRF54LM20A | Minimal init: LEDs + buttons (no NVMC, no clock divider) |
+| `src/utils/uicr.c` | nRF53-based | UICR channel read/write via `nrfx_nvmc` |
+| `src/utils/uicr_stub.c` | non-nRF53 | No-op UICR stubs (returns 0) |
+| `src/utils/board_version.c` | nRF5340 Audio DK | ADC-based board version detection |
+| `src/modules/audio_i2s.c` | nRF53 (I2S) | I2S PCM audio driver wrapper |
+| `src/modules/audio_usb.c` | All boards | USB audio class (CDC + headset composite) |
+| `src/modules/hw_codec.c` | nRF5340 Audio DK | CS47L63 codec volume/routing control |
+| `src/drivers/cs47l63_comm.c` | nRF5340 Audio DK | CS47L63 SPI communication driver |
+| `src/modules/sd_card.c` | nRF5340 Audio DK | SD card FAT filesystem access |
+| `src/modules/sd_card_playback.c` | nRF5340 Audio DK | WAV file playback thread |
+| `src/modules/audio_sync_timer.c` | nRF53 | RTC0-based audio sync timer |
 
 ---
 
@@ -68,18 +69,18 @@ src/drivers/
 
 ## Multi-Board Compilation Guards
 
-| Source file              | Compiled when                                    |
-|--------------------------|--------------------------------------------------|
-| `nrf5340_audio_dk.c`     | `CONFIG_SOC_SERIES_NRF53=y`                      |
-| `nrf54l_init.c`          | `NOT CONFIG_SOC_SERIES_NRF53`                    |
-| `uicr.c`                 | `CONFIG_SOC_SERIES_NRF53=y`                      |
-| `uicr_stub.c`            | `NOT CONFIG_SOC_SERIES_NRF53`                    |
-| `board_version.c`        | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` |
-| `audio_i2s.c`            | `CONFIG_NRFX_I2S=y`                              |
-| `audio_sync_timer.c`     | `CONFIG_AUDIO_SYNC_TIMER_USES_RTC=y` (nRF53 default) |
-| `audio_usb.c`            | Always (USB headset composite on all boards)     |
-| `hw_codec.c`             | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` (implicit via Kconfig) |
-| `cs47l63_comm.c`         | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` |
+| Source file | Compiled when |
+|---|---|
+| `nrf5340_audio_dk.c` | `CONFIG_SOC_SERIES_NRF53=y` |
+| `nrf54l_init.c` | `NOT CONFIG_SOC_SERIES_NRF53` |
+| `uicr.c` | `CONFIG_SOC_SERIES_NRF53=y` |
+| `uicr_stub.c` | `NOT CONFIG_SOC_SERIES_NRF53` |
+| `board_version.c` | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` |
+| `audio_i2s.c` | `CONFIG_NRFX_I2S=y` |
+| `audio_sync_timer.c` | `CONFIG_AUDIO_SYNC_TIMER_USES_RTC=y` (nRF53 default) |
+| `audio_usb.c` | Always (USB headset composite on all boards) |
+| `hw_codec.c` | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` (implicit via Kconfig) |
+| `cs47l63_comm.c` | `CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP=y` |
 
 In `audio_i2s.h`, all public functions are wrapped with `#if IS_ENABLED(CONFIG_NRFX_I2S)`
 and provide empty inline stubs in the `#else` branch, so callers compile unconditionally.
@@ -123,25 +124,25 @@ On nRF54LM20A (no NVMC), `uicr_stub.c` provides identical signatures returning 0
 ## Kconfig Flags
 
 ### Audio hardware
-| Symbol                              | Description                                    | Default      |
-|-------------------------------------|------------------------------------------------|--------------|
-| `CONFIG_NRFX_I2S`                   | Enable I2S PCM driver                          | y (nRF53 board conf) |
-| `CONFIG_NRFX_NVMC`                  | Enable NVMC for UICR access                    | y if nRF53   |
-| `CONFIG_AUDIO_SYNC_TIMER_USES_RTC`  | Use RTC0 for audio sync timer                  | y if nRF53   |
-| `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE` | Enable SD card + FatFS                       | n            |
-| `CONFIG_FAT_FILESYSTEM_ELM`         | FatFS library (required by SD card module)     | n (nRF7002DK, nRF54LM20DK board conf) |
-| `CONFIG_CS47L63_STACK_SIZE`         | CS47L63 SPI thread stack size (bytes)          | 4096         |
-| `CONFIG_CS47L63_THREAD_PRIO`        | CS47L63 thread priority                        | 4            |
-| `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE`| SD playback thread stack size                  | 4096         |
-| `CONFIG_POWER_MEAS_START_ON_BOOT`   | Start power measurement thread on boot         | n            |
+| Symbol | Description | Default |
+|---|---|---|
+| `CONFIG_NRFX_I2S` | Enable I2S PCM driver | y (nRF53 board conf) |
+| `CONFIG_NRFX_NVMC` | Enable NVMC for UICR access | y if nRF53 |
+| `CONFIG_AUDIO_SYNC_TIMER_USES_RTC` | Use RTC0 for audio sync timer | y if nRF53 |
+| `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE` | Enable SD card + FatFS | n |
+| `CONFIG_FAT_FILESYSTEM_ELM` | FatFS library (required by SD card module) | n (nRF7002DK, nRF54LM20DK board conf) |
+| `CONFIG_CS47L63_STACK_SIZE` | CS47L63 SPI thread stack size (bytes) | 4096 |
+| `CONFIG_CS47L63_THREAD_PRIO` | CS47L63 thread priority | 4 |
+| `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE` | SD playback thread stack size | 4096 |
+| `CONFIG_POWER_MEAS_START_ON_BOOT` | Start power measurement thread on boot | n |
 
 ### zego brick button/LED configuration (per-board `boards/*.conf`)
 
-| Symbol                               | Description                                   | nRF5340 Audio DK | nRF7002DK | nRF54LM20DK |
-|--------------------------------------|-----------------------------------------------|-----------------|-----------|-------------|
-| `CONFIG_ZEGO_BUTTON_NUM_BUTTONS`     | Number of physical buttons available          | 5               | 2         | 3           |
-| `CONFIG_ZEGO_LED_NUM_LEDS`           | Number of LED units available                 | 9               | 2         | 4           |
-| `CONFIG_APP_UX_WIFI_LED_IDX`         | LED index for Wi-Fi status                    | 0 (RGB1)        | 0         | 0           |
+| Symbol | Description | nRF5340 Audio DK | nRF7002DK | nRF54LM20DK |
+|---|---|---|---|---|
+| `CONFIG_ZEGO_BUTTON_NUM_BUTTONS` | Number of physical buttons available | 5 | 2 | 3 |
+| `CONFIG_ZEGO_LED_NUM_LEDS` | Number of LED units available | 9 | 2 | 4 |
+| `CONFIG_APP_UX_WIFI_LED_IDX` | LED index for Wi-Fi status | 0 (RGB1) | 0 | 0 |
 
 nRF5340 Audio DK LED layout (9 LEDs):
 - idx 0–2: RGB1 (used for Wi-Fi status ROTATE animation by default — `rotate_count=3, rotate_indices[0..2]`)
@@ -150,11 +151,11 @@ nRF5340 Audio DK LED layout (9 LEDs):
 
 ### Board scope (P0 vs deferred)
 
-| Board                    | Role(s)              | Audio I/O     | Status              |
-|--------------------------|----------------------|---------------|---------------------|
+| Board | Role(s) | Audio I/O | Status |
+|---|---|---|---|
 | nRF5340 Audio DK + nRF7002EK | Gateway + Headset | I2S / CS47L63 | **P0 — must work** |
-| nRF7002DK                | Gateway (build)      | USB (deferred)| Build must not break; USB-audio path not validated in this release |
-| nRF54LM20DK + nRF7002EB2 | Gateway (build)     | USB (deferred)| Build must not break; USB-audio path not validated in this release |
+| nRF7002DK | Gateway (build) | USB (deferred) | Build must not break; USB-audio path not validated in this release |
+| nRF54LM20DK + nRF7002EB2 | Gateway (build) | USB (deferred) | Build must not break; USB-audio path not validated in this release |
 
 If a deferred board **cannot build at all** (not just lacks audio I/O), log it as
 a known gap rather than silently dropping it.
@@ -187,22 +188,22 @@ negative errno on failure.
 
 ## Error Handling
 
-| Condition                      | Handling                                              |
-|--------------------------------|-------------------------------------------------------|
-| `led_init()` failure           | `LOG_ERR`, return error (init fails at boot)          |
-| `button_handler_init()` failure | `LOG_ERR`, return error                              |
-| `nrfx_nvmc` unavailable        | Only compiled when `CONFIG_NRFX_NVMC=y` (nRF53 only) |
-| Board version ADC failure      | `LOG_ERR`, return error                               |
-| USB audio init failure         | `LOG_ERR`, USB audio path disabled                    |
+| Condition | Handling |
+|---|---|
+| `led_init()` failure | `LOG_ERR`, return error (init fails at boot) |
+| `button_handler_init()` failure | `LOG_ERR`, return error |
+| `nrfx_nvmc` unavailable | Only compiled when `CONFIG_NRFX_NVMC=y` (nRF53 only) |
+| Board version ADC failure | `LOG_ERR`, return error |
+| USB audio init failure | `LOG_ERR`, USB audio path disabled |
 
 ---
 
 ## Test Points
 
-| UART log string                     | Expected condition                        |
-|-------------------------------------|-------------------------------------------|
-| `Board version: <n>`                | nRF5340 Audio DK ADC board version read   |
-| `LED initialized`                   | `led_init()` success                      |
-| `Button handler initialized`        | `button_handler_init()` success           |
-| `UICR channel: L` / `R`            | Channel read from UICR (nRF53 only)       |
-| `nrf5340_audio_dk_init done`        | Board init completed                      |
+| UART log string | Expected condition |
+|---|---|
+| `Board version: <n>` | nRF5340 Audio DK ADC board version read |
+| `LED initialized` | `led_init()` success |
+| `Button handler initialized` | `button_handler_init()` success |
+| `UICR channel: L` / `R` | Channel read from UICR (nRF53 only) |
+| `nrf5340_audio_dk_init done` | Board init completed |
