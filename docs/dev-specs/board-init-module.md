@@ -2,18 +2,21 @@
 
 ## Document Information
 
-| Field          | Value                        |
-|----------------|------------------------------|
-| Project        | Nordic Wi-Fi Opus Audio Demo |
-| NCS Version    | v3.3.0                       |
-| PRD Version    | 2026-05-27-23-14             |
-| Latest Version | 2026-05-27-23-14             |
+| Field          | Value                                                                            |
+|----------------|----------------------------------------------------------------------------------|
+| Project        | Nordic Wi-Fi Audio Demo                                                          |
+| Version        | 2026-06-22-15-18                                                                 |
+| PRD Version    | 2026-06-22-15-18                                                                 |
+| NCS Version    | v3.3.0                                                                           |
+| Target Board(s)| nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
+| Status         | In Review                                                                        |
 
 ## Changelog
 
-| Version          | Summary of changes                                         |
-|------------------|------------------------------------------------------------|
-| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)            |
+| Version          | Summary of changes                                                              |
+|------------------|---------------------------------------------------------------------------------|
+| 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added per-board zego button/LED Kconfig, noted deferred USB-audio boards, nrf54l_init.c simplified (bricks own GPIO) |
+| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)                                 |
 
 ---
 
@@ -119,6 +122,7 @@ On nRF54LM20A (no NVMC), `uicr_stub.c` provides identical signatures returning 0
 
 ## Kconfig Flags
 
+### Audio hardware
 | Symbol                              | Description                                    | Default      |
 |-------------------------------------|------------------------------------------------|--------------|
 | `CONFIG_NRFX_I2S`                   | Enable I2S PCM driver                          | y (nRF53 board conf) |
@@ -130,6 +134,30 @@ On nRF54LM20A (no NVMC), `uicr_stub.c` provides identical signatures returning 0
 | `CONFIG_CS47L63_THREAD_PRIO`        | CS47L63 thread priority                        | 4            |
 | `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE`| SD playback thread stack size                  | 4096         |
 | `CONFIG_POWER_MEAS_START_ON_BOOT`   | Start power measurement thread on boot         | n            |
+
+### zego brick button/LED configuration (per-board `boards/*.conf`)
+
+| Symbol                               | Description                                   | nRF5340 Audio DK | nRF7002DK | nRF54LM20DK |
+|--------------------------------------|-----------------------------------------------|-----------------|-----------|-------------|
+| `CONFIG_ZEGO_BUTTON_NUM_BUTTONS`     | Number of physical buttons available          | 5               | 2         | 3           |
+| `CONFIG_ZEGO_LED_NUM_LEDS`           | Number of LED units available                 | 9               | 2         | 4           |
+| `CONFIG_APP_UX_WIFI_LED_IDX`         | LED index for Wi-Fi status                    | 0 (RGB1)        | 0         | 0           |
+
+nRF5340 Audio DK LED layout (9 LEDs):
+- idx 0–2: RGB1 (used for Wi-Fi status ROTATE animation by default — `rotate_count=3, rotate_indices[0..2]`)
+- idx 3–5: RGB2
+- idx 6–8: mono LEDs
+
+### Board scope (P0 vs deferred)
+
+| Board                    | Role(s)              | Audio I/O     | Status              |
+|--------------------------|----------------------|---------------|---------------------|
+| nRF5340 Audio DK + nRF7002EK | Gateway + Headset | I2S / CS47L63 | **P0 — must work** |
+| nRF7002DK                | Gateway (build)      | USB (deferred)| Build must not break; USB-audio path not validated in this release |
+| nRF54LM20DK + nRF7002EB2 | Gateway (build)     | USB (deferred)| Build must not break; USB-audio path not validated in this release |
+
+If a deferred board **cannot build at all** (not just lacks audio I/O), log it as
+a known gap rather than silently dropping it.
 
 ---
 

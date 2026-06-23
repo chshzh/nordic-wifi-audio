@@ -2,18 +2,21 @@
 
 ## Document Information
 
-| Field          | Value                        |
-|----------------|------------------------------|
-| Project        | Nordic Wi-Fi Opus Audio Demo |
-| NCS Version    | v3.3.0                       |
-| PRD Version    | 2026-05-27-23-14             |
-| Latest Version | 2026-05-27-23-14             |
+| Field          | Value                                                                            |
+|----------------|----------------------------------------------------------------------------------|
+| Project        | Nordic Wi-Fi Audio Demo                                                          |
+| Version        | 2026-06-22-15-18                                                                 |
+| PRD Version    | 2026-06-22-15-18                                                                 |
+| NCS Version    | v3.3.0                                                                           |
+| Target Board(s)| nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
+| Status         | In Review                                                                        |
 
 ## Changelog
 
-| Version          | Summary of changes                                         |
-|------------------|------------------------------------------------------------|
-| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)            |
+| Version          | Summary of changes                                                              |
+|------------------|---------------------------------------------------------------------------------|
+| 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added peer-address resolution by mode (P2P = fixed IP, STA = mDNS); Opus STA-only constraint documented |
+| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)                                 |
 
 ---
 
@@ -72,17 +75,39 @@ Max frame size: 1500 bytes (Wi-Fi MTU). Gateway TX size configured to 2048 bytes
 
 ## Codec Abstraction
 
-`sw_codec_select.c` wraps the codec behind a uniform interface. Selected at build
-time:
+`sw_codec_select.c` wraps the codec behind a uniform interface. Selected at build time:
 
-| Kconfig symbol        | Codec   | Default bitrate      |
-|-----------------------|---------|----------------------|
-| `CONFIG_SW_CODEC_OPUS=y` | Opus (libopus v1.5.2) | `CONFIG_LC3_BITRATE` |
-| `CONFIG_SW_CODEC_LC3=y`  | LC3                   | `CONFIG_LC3_BITRATE` |
-| `CONFIG_SW_CODEC_NO_CODEC=y` | Raw PCM (no compression) | N/A          |
+| Kconfig symbol        | Codec   | Default bitrate      | Allowed modes  |
+|-----------------------|---------|----------------------|----------------|
+| `CONFIG_SW_CODEC_NO_CODEC=y` | Raw PCM (no compression) | N/A | P2P and STA |
+| `CONFIG_SW_CODEC_OPUS=y` | Opus (libopus v1.5.2) | `CONFIG_LC3_BITRATE` | **STA only** |
+| `CONFIG_SW_CODEC_LC3=y`  | LC3                   | `CONFIG_LC3_BITRATE` | STA only |
+
+**Raw PCM is the default codec** (enabled by `CONFIG_SW_CODEC_NO_CODEC=y` in `prj.conf`).
+Opus is enabled via `overlay-opus.conf` and is **only valid in STA mode**.
+**P2P + Opus must never be built in a single image** — the combined RAM of the WPA
+supplicant P2P heap and libopus working set exceeds nRF5340 available RAM (NFR-005).
 
 Bitrate range: `CONFIG_LC3_BITRATE_MIN` (6000) to `CONFIG_LC3_BITRATE_MAX` (320000).
 Default: `CONFIG_LC3_BITRATE`.
+
+---
+
+## Peer Address Resolution
+
+The headset (UDP client) must know the gateway's IP address before it can stream.
+Resolution strategy depends on the Wi-Fi mode:
+
+| Mode           | Resolution strategy                                     | Where implemented                    |
+|----------------|---------------------------------------------------------|--------------------------------------|
+| STA            | mDNS DNS-SD resolution of `audiogateway.local`         | `socket_utils.c` existing DNS-SD path |
+| P2P_CLIENT     | Fixed GO IP `192.168.7.1` — no DHCP, no mDNS on P2P link | Set in `net_event_app.c` `dhcp_bound` hook |
+
+Gateway (UDP server) binds to its own static/assigned IP and listens for packets.
+In P2P_GO mode the gateway has static IP `192.168.7.1`; in STA mode it uses its DHCP-assigned IP.
+
+The headset mDNS resolver code path is kept as-is for STA mode. The P2P_CLIENT path
+bypasses DNS-SD and calls `socket_utils_set_target_ipv4()` directly from the hook.
 
 ---
 

@@ -2,40 +2,132 @@
 
 ## Document Information
 
-| Field          | Value                        |
-|----------------|------------------------------|
-| Project        | Nordic Wi-Fi Opus Audio Demo |
-| NCS Version    | v3.3.0                       |
-| PRD Version    | 2026-05-27-23-14             |
-| Latest Version | 2026-05-27-23-14             |
+| Field          | Value                                                                            |
+|----------------|----------------------------------------------------------------------------------|
+| Project        | Nordic Wi-Fi Audio Demo                                                          |
+| Version        | 2026-06-22-15-18                                                                 |
+| PRD Version    | 2026-06-22-15-18                                                                 |
+| NCS Version    | v3.3.0                                                                           |
+| Target Board(s)| nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
+| Status         | In Review                                                                        |
 
 ## Changelog
 
-| Version          | Summary of changes                                         |
-|------------------|------------------------------------------------------------|
-| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)            |
+| Version          | Summary of changes                                                              |
+|------------------|---------------------------------------------------------------------------------|
+| 2026-06-22-15-18 | Rewrite: zego-network consumption pattern replaces semaphore-based design; weak hooks documented; P2P peer resolution added; SoftAP mode retired |
+| 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse)                                 |
 
 ---
 
 ## Overview
 
-The network module handles all Wi-Fi and socket operations. Three source files:
+The network module has two parts:
 
-| File                         | Role                                                        |
-|------------------------------|-------------------------------------------------------------|
-| `src/net/socket_utils.c`     | UDP socket lifecycle, TX/RX thread, server/client framing   |
-| `src/net/wifi_utils.c`       | Wi-Fi management: SoftAP, STA connect, credentials, SSID    |
-| `src/net/net_event_mgmt.c`   | `net_mgmt` event callbacks; exports semaphores for main     |
+| File                                  | Role                                                              |
+|---------------------------------------|-------------------------------------------------------------------|
+| `src/modules/network/net_event_app.c` | Strong overrides of zego/network weak hooks → audio start/stop + `APP_WIFI_STATE_CHAN` |
+| `src/net/socket_utils.c`             | UDP socket lifecycle, TX/RX thread, mode-branched peer resolution |
+
+The `zego/network` brick owns all Wi-Fi lifecycle (WPA supplicant sequencing,
+P2P_GO auto-start, P2P_CLIENT peer scan and connect, DHCP, AP station tracking).
+The app provides application-specific behavior by overriding the brick's weak hooks.
+
+Custom `net_event_mgmt.c` and `wifi_utils.c` (SoftAP/mode logic) are retired.
 
 ---
 
-## File Locations
+## Weak Hook API
 
-```
-src/net/
-├── socket_utils.c/h    — UDP socket (server/client), RX queue, TX
-├── wifi_utils.c/h      — SoftAP mode, connect, credentials, SSID utils
-└── net_event_mgmt.c/h  — net_mgmt callbacks, exported semaphores
+`zego/bricks/network` defines six weak functions. The app provides strong overrides
+in `src/modules/network/net_event_app.c`:
+
+| Hook function                                 | Fired when (per zego network-spec.md)             | App action                                        |
+|-----------------------------------------------|---------------------------------------------------|---------------------------------------------------|
+| `zego_on_net_event_wifi_connect()`            | L2 connected; IP not yet ready (STA, P2P_CLIENT)  | Optional: log link up; no audio yet               |
+| `zego_on_net_event_dhcp_bound(mode, ip, mac, ssid)` | STA: DHCP_BOUND event; P2P_CLIENT: CONNECT_RESULT (static 192.168.7.2); **P2P_GO: first AP_STA_CONNECTED** | **Start audio pipeline + socket; publish CONNECTED** |
+| `zego_on_net_event_wifi_disconnect()`         | Link lost (STA/P2P_CLIENT disconnect result)      | **Stop audio pipeline; publish ERROR**            |
+| `zego_on_net_event_wifi_ap_enabled()`         | P2P_GO AP ready (before clients connect)          | Optional: log AP up                               |
+| `zego_on_net_event_wifi_ap_sta_connected(station_count, ip, mac)` | P2P_GO: each client joined | Track station count; audio already started by `dhcp_bound` on first client |
+| `zego_on_net_event_wifi_ap_sta_disconnected(station_count)` | P2P_GO: client left | If station_count==0: **stop audio; publish ERROR** |
+
+**Key confirmed behavior (zego network-spec.md, changelog 2026-06-14):**
+- `dhcp_bound` is the **unified "network ready" hook for all modes**: fires from DHCP_BOUND (STA), from CONNECT_RESULT with static IP (P2P_CLIENT), and from first AP_STA_CONNECTED (P2P_GO).
+- P2P_CLIENT: `ip_addr` = "192.168.7.2" (client's static IP). Gateway GO is always at "192.168.7.1".
+- P2P_GO: `ip_addr` = "192.168.7.1" (GO's own IP). No brick gap — OI-003 resolved.
+
+---
+
+## Hook Implementation Pattern
+
+```c
+/* src/modules/network/net_event_app.c */
+
+/* Channel definition — owned by this file */
+ZBUS_CHAN_DEFINE(APP_WIFI_STATE_CHAN, struct app_wifi_state_msg,
+    NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+    ZBUS_MSG_INIT(.state = APP_WIFI_STATE_CONNECTING, .mode = ZEGO_WIFI_MODE_P2P_GO));
+
+/* Called by zego/network when STA gets DHCP lease, OR P2P_CLIENT gets static IP */
+void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode,
+                                   const struct in_addr *ip,
+                                   const uint8_t *mac,
+                                   const char *ssid)
+{
+    LOG_INF("Connected (%s) — starting audio", zego_wifi_mode_str(mode));
+
+    /* Start audio pipeline */
+    audio_system_encoder_start();           /* gateway: encode + transmit */
+    /* wifi_audio_rx already init'd in main(); socket ready after target set */
+
+    /* Notify ux module */
+    struct app_wifi_state_msg msg = {
+        .state = APP_WIFI_STATE_CONNECTED,
+        .mode  = mode,
+    };
+    zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+
+    /* Set peer address for socket transport (mode-branched — see socket_utils spec) */
+    if (mode == ZEGO_WIFI_MODE_P2P_CLIENT) {
+        /* Fixed GO IP — no mDNS on P2P link */
+        struct in_addr go_addr;
+        zsock_inet_pton(AF_INET, "192.168.7.1", &go_addr);
+        socket_utils_set_target_ipv4(&go_addr);
+    }
+    /* STA mode: headset uses mDNS discovery (existing path in socket_utils) */
+}
+
+void zego_on_net_event_wifi_disconnect(void)
+{
+    LOG_INF("Disconnected — stopping audio");
+    audio_system_encoder_stop();
+    struct app_wifi_state_msg msg = {
+        .state = APP_WIFI_STATE_ERROR,
+    };
+    zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+}
+
+/* P2P_GO: subsequent clients (audio already started by dhcp_bound on first) */
+void zego_on_net_event_wifi_ap_sta_connected(int station_count,
+                                              const struct in_addr *ip,
+                                              const uint8_t *mac)
+{
+    LOG_INF("P2P client connected (%d total)", station_count);
+    /* dhcp_bound handles audio start on first client; nothing more needed here */
+}
+
+/* P2P_GO: client left */
+void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
+{
+    if (station_count == 0) {
+        LOG_INF("All P2P clients gone — stopping audio");
+        audio_system_encoder_stop();
+        struct app_wifi_state_msg msg = {
+            .state = APP_WIFI_STATE_ERROR,
+        };
+        zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+    }
+}
 ```
 
 ---
@@ -44,162 +136,105 @@ src/net/
 
 Selected at build time — mutually exclusive:
 
-| Kconfig                     | Role     | Behaviour                                              |
-|-----------------------------|----------|--------------------------------------------------------|
-| `CONFIG_SOCKET_ROLE_SERVER=y` | Gateway | Binds UDP socket; waits for client to connect          |
-| `CONFIG_SOCKET_ROLE_CLIENT=y` | Headset | Resolves `audiogateway.local` via mDNS; connects to server |
+| Kconfig                     | Role     | Behaviour                                                        |
+|-----------------------------|----------|------------------------------------------------------------------|
+| `CONFIG_SOCKET_ROLE_SERVER=y` | Gateway | Binds UDP socket on port 60010; waits for first RX packet       |
+| `CONFIG_SOCKET_ROLE_CLIENT=y` | Headset | Resolves peer address (mode-branched); sends AUDIO_START_CMD    |
 
-The socket thread runs continuously in `socket_utils_thread()`:
+The `socket_utils_thread()` loop:
 1. Create UDP socket
-2. Bind to local port (server) or resolve + set target address (client)
-3. Enter RX loop — posts received frames to `socket_recv_queue` (k_msgq)
-4. On disconnect/error: `zsock_close()`, sleep 1 s, retry from step 1
+2. Bind to local port
+3. Wait for target address (P2P: set in hook; STA: mDNS discovery)
+4. Enter RX loop — posts frames to `socket_recv_queue`
+5. On disconnect/error: `zsock_close()`, sleep 1 s, retry
+
+**The socket thread no longer calls `k_sem_take()` on `wpa_supplicant_ready_sem`,
+`ipv4_dhcp_bond_sem`, or `station_connected_sem`**. Those semaphores are retired.
+Instead the thread waits for `socket_utils_is_target_set()` to become true (set by
+the hook) or for a direct call to `socket_utils_set_target_ipv4()`.
+
+---
+
+## Peer Address Resolution (Mode-Branched)
+
+| Mode         | How headset finds gateway                                          | Where implemented        |
+|--------------|--------------------------------------------------------------------|--------------------------|
+| STA          | mDNS DNS-SD resolution of `audiogateway.local` → IP               | `socket_utils.c` (existing path) |
+| P2P_CLIENT   | Fixed GO IP `192.168.7.1` — set in `zego_on_net_event_dhcp_bound` | `net_event_app.c` hook   |
+| P2P_GO       | Gateway binds to its own static IP `192.168.7.1`; no discovery needed | `socket_utils.c` server bind |
+
+mDNS discovery is **STA-only**. In P2P mode, mDNS multicast is not reliable over the
+P2P link; the fixed IP pair is the correct approach.
 
 ---
 
 ## Zbus Integration
 
-The network module does not publish or subscribe to Zbus directly.
-It communicates with the application via:
-- `socket_recv_queue` (k_msgq) — RX frames posted here, consumed by `wifi_audio_rx`
-- `net_util_socket_rx_callback_t` — optional RX callback registered by `wifi_audio_rx_init()`
-- `socket_connected_signall` / `serveraddr_set_signall` — volatile bool signals
-
----
-
-## Network Event Semaphores
-
-`net_event_mgmt.c` exports these semaphores (taken by `main()` during boot):
-
-| Semaphore                    | Given when                                      |
-|------------------------------|-------------------------------------------------|
-| `iface_up_sem`               | Network interface UP event received             |
-| `wpa_supplicant_ready_sem`   | WPA supplicant ready event received             |
-| `ipv4_dhcp_bond_sem`         | DHCP lease assigned (STA mode)                  |
-| `station_connected_sem`      | Station joined the SoftAP (SoftAP/server mode)  |
-
-`net_event_mgmt_is_connected()` returns true when WiFi is connected with DHCP IP assigned.
-
----
-
-## Wi-Fi Modes
-
-### STA Mode (default)
-- Uses `CONFIG_WIFI_CREDENTIALS` (persistent credential store).
-- `wifi_utils_ensure_gateway_softap_credentials()` seeds default `GatewayAP` WPA2 credentials.
-- `wifi_utils_auto_connect_stored()` triggers `NET_REQUEST_WIFI_CONNECT_STORED`.
-- Static credentials: `overlay-wifi-cred-static.conf` (dev/test only).
-
-### SoftAP Mode (`overlay-gateway-softap.conf`)
-- `wifi_run_softap_mode()` starts AP with configured SSID/channel/band.
-- Default: 5 GHz channel 165 (configurable: `CONFIG_SOFTAP_BAND_5_GHZ`, `CONFIG_SOFTAP_CHANNEL`).
-- SSID: `CONFIG_SOFTAP_SSID` (default `"GatewayAP"`), password: `CONFIG_SOFTAP_PASSWORD`.
-- `wifi_softap_has_connected_stations()` / `wifi_softap_wait_for_station()` for client detection.
-
----
-
-## mDNS / DNS-SD
-
-**Gateway** (server role):
-- `CONFIG_MDNS_RESPONDER=y`, `CONFIG_DNS_SD=y`, `CONFIG_NET_HOSTNAME="audiogateway"`
-- Advertises audio service via DNS-SD so headset can discover by name.
-
-**Headset** (client role):
-- `CONFIG_MDNS_RESOLVER=y`, `CONFIG_DNS_RESOLVER=y`, `CONFIG_NET_HOSTNAME="audioheadset"`
-- Resolves `audiogateway.local` to gateway's IP via mDNS multicast (224.0.0.251).
-- `CONFIG_NET_SOCKETS_DNS_TIMEOUT=1000` (1 s per query — mDNS is fast on local network).
-- `CONFIG_NET_IPV4_IGMP=y` required for multicast group membership.
+| Channel              | Direction | Notes                                         |
+|----------------------|-----------|-----------------------------------------------|
+| `APP_WIFI_STATE_CHAN` | Publish  | Published in each hook; subscribers: ux.c (LED) |
 
 ---
 
 ## Kconfig Flags
 
-| Symbol                            | Description                                      | Default |
-|-----------------------------------|--------------------------------------------------|---------|
-| `CONFIG_SOCKET_UTILS`             | Enable socket_utils module                       | y       |
-| `CONFIG_SOCKET_ROLE_SERVER`       | UDP server (gateway)                             | in overlay |
-| `CONFIG_SOCKET_ROLE_CLIENT`       | UDP client (headset)                             | in overlay |
-| `CONFIG_SOCKET_TYPE_UDP`          | Transport type (currently only UDP supported)    | y       |
-| `CONFIG_SOCKET_STACK_SIZE`        | Socket thread stack size (bytes)                 | 4096    |
-| `CONFIG_SOCKET_UTILS_THREAD_PRIO` | Socket thread priority                           | 6       |
-| `CONFIG_CONNECT_WITH_WIFI`        | Enable WiFi connectivity (vs raw/injection mode) | y       |
-| `CONFIG_SOFTAP_SSID`              | SoftAP network name                              | `"GatewayAP"` |
-| `CONFIG_SOFTAP_PASSWORD`          | SoftAP password                                  | `"wifi1234"` |
-| `CONFIG_SOFTAP_BAND_5_GHZ`        | Use 5 GHz band for SoftAP                        | in overlay |
-| `CONFIG_SOFTAP_CHANNEL`           | SoftAP channel number                            | 165 (5 GHz) |
+| Symbol                            | Description                                            | Default      |
+|-----------------------------------|--------------------------------------------------------|--------------|
+| `CONFIG_SOCKET_UTILS`             | Enable socket_utils module                             | y            |
+| `CONFIG_SOCKET_ROLE_SERVER`       | UDP server (gateway)                                   | in overlay   |
+| `CONFIG_SOCKET_ROLE_CLIENT`       | UDP client (headset)                                   | in overlay   |
+| `CONFIG_SOCKET_STACK_SIZE`        | Socket thread stack size (bytes)                       | 6144         |
+| `CONFIG_SOCKET_UTILS_THREAD_PRIO` | Socket thread priority                                 | 6            |
+| `CONFIG_ZEGO_NETWORK`             | Enable zego/network brick                              | y            |
+| `CONFIG_ZEGO_NETWORK_MDNS`        | Enable mDNS responder (STA mode: `audiogateway.local`) | y (STA overlay) |
+| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO` | Default mode: P2P_GO (gateway)                  | y (gateway prj.conf) |
+| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_CLIENT` | Default mode: P2P_CLIENT (headset)           | y (headset prj.conf) |
+| `CONFIG_ZEGO_WIFI_P2P_CLIENT_TARGET_GO_MAC` | OUI prefix for P2P_CLIENT target GO        | `F4:CE:36:00:00:00` (example; set to actual GW OUI) |
 
 ---
 
-## API / Public Interface
+## API
 
-### `socket_utils.h`
+### `net_event_app.c` (app-owned)
+```c
+/* Zbus channel — defined here, declared extern in messages.h */
+extern const struct zbus_channel APP_WIFI_STATE_CHAN;
+
+/* No public functions — all interaction is via weak hooks and the zbus channel */
+```
+
+### `socket_utils.h` (kept)
 ```c
 void socket_utils_set_rx_callback(net_util_socket_rx_callback_t cb);
 int  socket_utils_tx_data(uint8_t *data, size_t length);
 void socket_utils_thread(void);
-
-/* SERVER role */
-void socket_utils_softap_handle_disconnect(void);
-
-/* CLIENT role */
 bool socket_utils_is_target_set(void);
 void socket_utils_set_target_ipv4(const struct in_addr *addr);
 void socket_utils_clear_target(void);
 void socket_utils_set_target_ready_callback(socket_utils_target_ready_cb_t cb);
-
-/* SoftAP helpers */
-bool wifi_softap_has_connected_stations(void);
-int  wifi_softap_wait_for_station(k_timeout_t timeout);
-```
-
-### `wifi_utils.h`
-```c
-int         wifi_run_softap_mode(void);
-int         wifi_print_status(void);
-void        wifi_print_dhcp_ip(struct net_mgmt_event_callback *cb);
-const char *wifi_utils_get_last_ssid(void);
-int         wifi_utils_ensure_gateway_softap_credentials(void);
-int         wifi_utils_auto_connect_stored(void);
-int         wifi_set_reg_domain(void);
-int         wifi_set_channel(int channel);
-int         wifi_set_mode(int mode);
-int         wifi_set_tx_injection_mode(void);
-```
-
-### `net_event_mgmt.h`
-```c
-int  init_network_events(void);
-bool net_event_mgmt_is_connected(void);
-extern struct k_sem iface_up_sem;
-extern struct k_sem wpa_supplicant_ready_sem;
-extern struct k_sem ipv4_dhcp_bond_sem;
-extern struct k_sem station_connected_sem;  /* SoftAP mode only */
 ```
 
 ---
 
 ## Error Handling
 
-| Condition                        | Handling                                               |
-|----------------------------------|--------------------------------------------------------|
-| Socket create failure            | `LOG_ERR`, sleep 1 s, retry loop                       |
-| `bind()` failure                 | `LOG_ERR`, `zsock_close()`, sleep 1 s, retry           |
-| RX error (`len == -1`)           | `LOG_ERR`, exit inner loop, close + reconnect          |
-| Client disconnected (`len == 0`) | `LOG_INF`, `zsock_close()`, reset signal flags         |
-| TX failure                       | Return negative errno to caller                        |
-| mDNS resolution timeout          | DNS resolver retries per `CONFIG_DNS_RESOLVER_ADDITIONAL_QUERIES` |
-| Wi-Fi connect failure            | `net_event_mgmt` logs; `ipv4_dhcp_bond_sem` never given |
+| Condition                          | Handling                                          |
+|------------------------------------|---------------------------------------------------|
+| WPA supplicant timeout (30 s)      | Logged by zego/network; hook not called; device stays in CONNECTING state |
+| P2P peer not found (90 s)          | zego/network retries after 15 s; no hook called   |
+| Brick gap: hook not fired for P2P_CLIENT | Escalate as separate decision; do not inline | 
+| Socket create failure              | `LOG_ERR`, sleep 1 s, retry loop                  |
+| RX error (`len == -1`)             | `LOG_ERR`, close + reconnect                      |
+| Wi-Fi disconnect (STA)             | `zego_on_net_event_wifi_disconnect()` called → audio stops; APP_WIFI_STATE_CHAN → ERROR |
 
 ---
 
 ## Test Points
 
-| UART log string                         | Expected condition                    |
-|-----------------------------------------|---------------------------------------|
-| `Network events initialized`            | `init_network_events()` success       |
-| `WiFi connected`                        | `NET_EVENT_WIFI_CONNECT_RESULT`       |
-| `DHCP IP: <addr>`                       | DHCP lease assigned                   |
-| `Socket ready`                          | UDP socket bound (server) or target set (client) |
-| `Station connected`                     | SoftAP mode: client joined            |
-| `Client disconnected`                   | Server: client left, stream paused    |
-| `Resolving audiogateway.local...`       | Headset mDNS resolve in progress      |
+| UART log string                                   | Expected condition                         |
+|---------------------------------------------------|--------------------------------------------|
+| `[net_event_app] Connected — starting audio`      | `dhcp_bound` or `ap_sta_connected` hook fired |
+| `[net_event_app] Disconnected — stopping audio`   | Disconnect hook fired                      |
+| `[net_event_app] P2P client connected (1 total)`  | P2P_GO: first client joined                |
+| `Socket ready` / `Socket connected`               | UDP socket ready for TX/RX                 |
+| `Resolving audiogateway.local...`                 | Headset mDNS resolve (STA mode only)       |

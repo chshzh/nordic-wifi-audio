@@ -1,28 +1,31 @@
-# Architecture Spec — nordic-wifi-audio
+# Architecture Spec — Nordic Wi-Fi Audio Demo
 
 ## Document Information
 
-| Field          | Value                        |
-|----------------|------------------------------|
-| Project        | Nordic Wi-Fi Opus Audio Demo |
-| NCS Version    | v3.3.0                       |
-| PRD Version    | 2026-05-27-23-14             |
-| Latest Version | 2026-05-27-23-14             |
+| Field          | Value                                                                            |
+|----------------|----------------------------------------------------------------------------------|
+| Project        | Nordic Wi-Fi Audio Demo                                                          |
+| Version        | 2026-06-22-15-18                                                                 |
+| PRD Version    | 2026-06-22-15-18                                                                 |
+| NCS Version    | v3.3.0                                                                           |
+| Target Board(s)| nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
+| Status         | In Review                                                                        |
 
 ## Changelog
 
-| Version          | Summary of changes                                         |
-|------------------|------------------------------------------------------------|
-| 2026-05-27-23-14 | Initial architecture derived from code (Mode C Reverse)    |
+| Version          | Summary of changes                                                              |
+|------------------|---------------------------------------------------------------------------------|
+| 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: zego brick architecture, P2P default boot sequence, module map revised, memory budget updated |
+| 2026-05-27-23-14 | Initial architecture derived from code (Mode C Reverse)                         |
 
 ---
 
 ## Overview
 
-Multi-threaded architecture. Audio data flows through a dedicated pipeline of
-threads (encode → TX socket → network → RX socket → decode → output). UI events
-(buttons, volume) and stream control events use Zbus. Network lifecycle events
-use kernel semaphores.
+Pattern: **zego brick + weak hooks**. Audio data flows through a dedicated pipeline of
+threads (encode → TX socket → network → RX socket → decode → output). UI events and
+state broadcasts use Zbus. Network lifecycle is handled entirely by the zego network
+brick; the app reacts via weak-hook overrides.
 
 The codebase compiles two separate application entry points under one CMakeLists:
 - `wifi_audio_gateway/` — UDP server, audio source (I2S / USB / SD card)
@@ -39,67 +42,84 @@ builds for all three boards.
 ```
 nordic-wifi-audio/
 ├── wifi_audio_gateway/
-│   └── main.c              — gateway entry: button/event threads, stream control
+│   └── main.c              — gateway entry: audio threads, ux setup, stream control
 ├── wifi_audio_headset/
-│   └── main.c              — headset entry: button/event threads, stream control
-└── src/
-    ├── audio/
-    │   ├── audio_system.c/h        — encoder/decoder thread lifecycle
-    │   ├── audio_datapath.c/h      — drift compensation, presentation delay
-    │   ├── sw_codec_select.c/h     — codec abstraction (Opus / LC3 / raw)
-    │   └── wifi_audio_rx.c/h       — RX handler, frame protocol, decode
-    ├── modules/
-    │   ├── button_handler.c/h      — GPIO debounce, publishes button_chan
-    │   ├── led.c/h                 — RGB + mono LED control
-    │   ├── audio_i2s.c/h           — nRF53 I2S PCM driver wrapper
-    │   ├── audio_usb.c/h           — USB audio class (headset composite)
-    │   ├── audio_sync_timer.c/h    — RTC-based audio sync timer (nRF53 only)
-    │   ├── hw_codec.c/h            — CS47L63 HW audio codec (nRF5340 Audio DK)
-    │   ├── sd_card.c/h             — SD card FAT access
-    │   └── sd_card_playback.c/h    — WAV playback thread from SD
-    ├── net/
-    │   ├── socket_utils.c/h        — UDP socket (server/client), TX/RX thread
-    │   ├── wifi_utils.c/h          — SoftAP, connect, regulatory domain
-    │   └── net_event_mgmt.c/h      — net_mgmt event callbacks, semaphores
-    ├── drivers/
-    │   └── cs47l63_comm.c/h        — CS47L63 SPI comms driver
-    ├── debug/
-    │   └── heaps_monitor.c/h       — kernel heap monitor (optional)
-    └── utils/
-        ├── nrf5340_audio_dk.c/h    — board init: NVMC, clock, board_version (nRF53)
-        ├── nrf54l_init.c           — board init: LEDs, buttons only (nRF54LM20A)
-        ├── uicr.c/h                — UICR channel read/write via NVMC (nRF53)
-        ├── uicr_stub.c             — no-op UICR stubs (non-nRF53)
-        ├── board_version.c/h       — ADC board version detection (nRF5340 Audio DK)
-        ├── channel_assignment.c/h  — L/R/GW channel selection
-        └── error_handler.c         — fatal error handler
+│   └── main.c              — headset entry: audio threads, ux setup, stream control
+├── src/
+│   ├── audio/
+│   │   ├── audio_system.c/h        — encoder/decoder thread lifecycle
+│   │   ├── audio_datapath.c/h      — drift compensation, presentation delay
+│   │   ├── sw_codec_select.c/h     — codec abstraction (Opus / LC3 / raw)
+│   │   └── wifi_audio_rx.c/h       — RX handler, frame protocol, decode
+│   ├── modules/
+│   │   ├── ux/
+│   │   │   ├── ux.c                — button gestures → mode cycle; APP_WIFI_STATE_CHAN → LED
+│   │   │   ├── Kconfig             — CONFIG_APP_UX_MODULE, UX LED indices
+│   │   │   └── CMakeLists.txt
+│   │   ├── network/
+│   │   │   └── net_event_app.c     — strong overrides of zego weak hooks → audio + state
+│   │   ├── audio_i2s.c/h           — nRF53 I2S PCM driver wrapper
+│   │   ├── audio_usb.c/h           — USB audio class (headset composite)
+│   │   ├── audio_sync_timer.c/h    — RTC-based audio sync timer (nRF53 only)
+│   │   ├── hw_codec.c/h            — CS47L63 HW audio codec (nRF5340 Audio DK)
+│   │   ├── sd_card.c/h             — SD card FAT access
+│   │   └── sd_card_playback.c/h    — WAV playback thread from SD
+│   ├── net/
+│   │   └── socket_utils.c/h        — UDP socket (server/client), TX/RX thread, peer resolution
+│   ├── drivers/
+│   │   └── cs47l63_comm.c/h        — CS47L63 SPI comms driver
+│   └── utils/
+│       ├── nrf5340_audio_dk.c/h    — board init: NVMC, clock, board_version (nRF53)
+│       ├── nrf54l_init.c           — board init: (nRF54LM20A — minimal; LEDs/buttons via bricks)
+│       ├── uicr.c/h                — UICR channel read/write via NVMC (nRF53)
+│       ├── uicr_stub.c             — no-op UICR stubs (non-nRF53)
+│       ├── board_version.c/h       — ADC board version detection (nRF5340 Audio DK)
+│       ├── channel_assignment.c/h  — L/R/GW channel selection
+│       └── error_handler.c         — fatal error handler
+└── zego/bricks/ (read-only, via EXTRA_ZEPHYR_MODULES)
+    ├── button/     — gesture classification → BUTTON_CHAN
+    ├── led/        — LED state machine → LED_CMD_CHAN
+    ├── wifi/       — mode persistence, WIFI_MODE_CHAN, shell command
+    ├── network/    — Wi-Fi lifecycle, WPA supplicant, weak-hook API
+    └── memonitor/  — heap/stack watermark sampler, MEMONITOR_CHAN
 ```
 
 ---
 
 ## Zbus Channels
 
-| Channel            | Message type              | Publisher(s)           | Subscriber(s)              | Notes |
-|--------------------|---------------------------|------------------------|----------------------------|-------|
-| `button_chan`       | `struct button_msg`        | `button_handler`       | `button_evt_sub` (main)    | `button_pin` + `button_action` |
-| `le_audio_chan`     | `struct le_audio_msg`      | `wifi_audio_rx`, main  | `le_audio_evt_sub` (main)  | Carries stream events (START/STOP/STREAMING) |
-| `volume_chan`       | `struct volume_msg`        | main (button handler)  | `hw_codec`, headset main   | `VOLUME_UP/DOWN/SET/MUTE/UNMUTE` |
-| `content_control_chan` | `struct content_control_msg` | main              | audio subsystem            | `MEDIA_START/STOP` |
-| `sdu_ref_msg`      | `struct sdu_ref_msg`       | `audio_datapath`       | `sdu_ref_msg_listen`       | TX sync timestamp for drift compensation |
+| Channel              | Message type                   | Publisher(s)           | Subscriber(s)          | Notes                          |
+|----------------------|--------------------------------|------------------------|------------------------|--------------------------------|
+| `BUTTON_CHAN`        | `struct zego_button_msg`       | zego/button brick      | ux.c                   | Gestures: SINGLE_CLICK, LONG_PRESS |
+| `WIFI_MODE_CHAN`     | `struct zego_wifi_mode_msg`    | zego/wifi brick        | zego/network, ux.c     | Published once at SYS_INIT     |
+| `LED_CMD_CHAN`       | `struct zego_led_cmd`          | ux.c, net_event_app.c  | zego/led brick         | Commands: ON, ROTATE, BLINK    |
+| `APP_WIFI_STATE_CHAN`| `struct app_wifi_state_msg`    | net_event_app.c        | ux.c                   | States: CONNECTING/CONNECTED/ERROR |
+| `MEMONITOR_CHAN`     | `struct zego_memonitor_msg`    | zego/memonitor brick   | status shell command   | Snapshot every INTERVAL_MS     |
+| `le_audio_chan`      | `struct le_audio_msg`          | wifi_audio_rx, main    | le_audio_evt_sub       | Stream START/STOP events       |
+| `button_chan`        | `struct button_msg`            | (legacy, during transition) | button_msg_sub_thread | Audio volume/play; retired in Step 3.5 |
+| `volume_chan`        | `struct volume_msg`            | main (from button sub) | hw_codec               | VOLUME_UP/DOWN/SET/MUTE        |
+| `sdu_ref_msg`        | `struct sdu_ref_msg`           | audio_datapath         | sdu_ref_msg_listen     | TX sync timestamp for drift compensation |
 
 ---
 
 ## Message Definitions
 
-See `src/zbus_common.h` for all struct definitions. Key types:
+`APP_WIFI_STATE_CHAN` is defined in `src/modules/network/net_event_app.c` (or a shared `src/messages.h`):
 
 ```c
-struct button_msg { uint32_t button_pin; enum button_action button_action; };
-struct le_audio_msg { enum le_audio_evt_type event; /* + BT fields unused in WiFi mode */ };
-struct volume_msg { enum volume_evt_type event; uint8_t volume; };
-struct content_control_msg { enum content_control_evt_type event; };
-struct sdu_ref_msg { uint32_t tx_sync_ts_us; uint32_t curr_ts_us; bool adjust; };
+enum app_wifi_state {
+    APP_WIFI_STATE_CONNECTING = 0,
+    APP_WIFI_STATE_CONNECTED,
+    APP_WIFI_STATE_ERROR,
+};
+
+struct app_wifi_state_msg {
+    enum app_wifi_state state;
+    enum zego_wifi_mode mode;   /* from WIFI_MODE_CHAN — for ux to distinguish modes */
+};
 ```
+
+See `src/zbus_common.h` for legacy channel structs. See `zego/bricks/*/include/` for brick channel message types.
 
 ---
 
@@ -107,47 +127,65 @@ struct sdu_ref_msg { uint32_t tx_sync_ts_us; uint32_t curr_ts_us; bool adjust; }
 
 | Thread                     | Stack size config                  | Priority | Purpose                                |
 |----------------------------|------------------------------------|----------|----------------------------------------|
-| `button_msg_sub_thread`    | `CONFIG_BUTTON_MSG_SUB_STACK_SIZE` | app      | Blocks on `button_chan`, dispatches actions |
+| `button_msg_sub_thread`    | `CONFIG_BUTTON_MSG_SUB_STACK_SIZE` | app      | Blocks on `button_chan`, dispatches audio actions (vol/play) |
 | `le_audio_msg_sub_thread`  | `CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE` | app    | Blocks on `le_audio_chan`, drives stream state |
 | `encoder_thread`           | `CONFIG_ENCODER_STACK_SIZE`        | app      | Runs SW codec encode loop              |
 | `audio_datapath_thread`    | `CONFIG_AUDIO_DATAPATH_STACK_SIZE` | app      | Audio drift compensation, decode dispatch |
 | `socket_utils_thread`      | `CONFIG_SOCKET_STACK_SIZE`         | app      | UDP socket bind/recv/send loop         |
 | `volume_msg_sub_thread`    | `CONFIG_VOLUME_MSG_SUB_STACK_SIZE` | app      | Blocks on `volume_chan`, calls hw_codec |
-| `content_ctrl_sub_thread`  | `CONFIG_CONTENT_CONTROL_MSG_SUB_STACK_SIZE` | app | media start/stop events         |
 | `cs47l63_thread`           | `CONFIG_CS47L63_STACK_SIZE`        | high     | SPI codec comms (nRF5340 Audio DK only)|
 | `sd_card_playback_thread`  | `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE` | app    | SD WAV playback (optional)             |
-| `power_meas_thread`        | `CONFIG_POWER_MEAS_STACK_SIZE`     | low      | Periodic power measurement (optional)  |
+
+Zego brick threads (internal, not app-owned):
+- zego/network: one thread for WPA supplicant sequencing and P2P reconnect
+- zego/button: runs on system workqueue
+- zego/led: runs on system workqueue  
+- zego/memonitor: runs on system workqueue
+- zego/wifi: SYS_INIT only, no persistent thread
 
 ---
 
 ## Boot Sequence
 
 ```
-1. SYS_INIT: Zephyr kernel, drivers, net stack
-2. SYS_INIT: led_init()        — LED hardware ready
-3. SYS_INIT: button_handler_init()
-4. SYS_INIT: nrf5340_audio_dk_init() / nrf54l_init()
-              — nRF53: NVMC, clock divider, board_version ADC, LEDs
-              — nRF54LM20A: LEDs, buttons
-5. main() — init_network_events()  — register net_mgmt callbacks
-6. main() — WiFi connect / SoftAP start
-7. main() — k_sem_take(iface_up_sem, ...)  — wait for interface up
-8. main() — k_sem_take(wpa_supplicant_ready_sem, ...)
-9. main() — k_sem_take(ipv4_dhcp_bond_sem, ...)   [STA mode]
-         or k_sem_take(station_connected_sem, ...) [SoftAP mode — wait for client]
-10. main() — audio_system_init(), wifi_audio_rx_init()
-11. main() — socket_utils thread spawned
-12. main() — k_thread_create(button_msg_sub_thread)
-13. main() — k_thread_create(le_audio_msg_sub_thread)
-14. main() — audio_system_encoder_start()
+1. SYS_INIT (PRE_KERNEL_1): Zephyr kernel, drivers, net stack
+2. SYS_INIT (PRE_KERNEL_2): nRF70 Wi-Fi driver
+3. SYS_INIT (POST_KERNEL, ~41): zego/wifi brick
+   — reads NVS for saved mode
+   — publishes WIFI_MODE_CHAN (mode = P2P_GO or P2P_CLIENT by default)
+   — prints app banner to UART
+4. SYS_INIT (POST_KERNEL, ~42): zego/network brick
+   — reads WIFI_MODE_CHAN
+   — registers all net_mgmt callbacks
+   — waits for WPA supplicant ready (30 s timeout, bounded)
+   — dispatches to mode startup: P2P_GO auto-start or P2P_CLIENT peer scan
+5. SYS_INIT (POST_KERNEL, ~45): zego/button brick — GPIO configured
+   SYS_INIT (POST_KERNEL, ~45): zego/led brick — LED hardware ready
+   SYS_INIT (APPLICATION): zego/memonitor — starts sampling
+   SYS_INIT (APPLICATION): ux.c — starts ROTATE animation, app_ux_ready = true
+6. main() — nrf5340_audio_dk_init() / nrf54l_init() — board-specific init
+7. main() — audio_system_init(), wifi_audio_rx_init()
+8. main() — socket_utils_init() — spawns socket_utils_thread
+   socket_utils_thread waits in zego hook (no k_sem_take on global sems)
+9. main() — zbus_subscribers_create() — button, le_audio subs
+10. → Network events arrive via zego weak hooks in net_event_app.c:
+    zego_on_net_event_dhcp_bound (STA) / zego_on_net_event_wifi_ap_sta_connected (P2P_GO):
+      → audio_system_encoder_start()
+      → publish APP_WIFI_STATE_CHAN (CONNECTED)
+      → signal socket ready
 → Streaming begins
 ```
+
+**Key difference from pre-refactor**: `main()` no longer calls `k_sem_take()` on
+`iface_up_sem`, `wpa_supplicant_ready_sem`, `ipv4_dhcp_bond_sem`, or
+`station_connected_sem`. The zego network brick owns all sequencing internally.
+The audio starts from a hook, not from a sequential boot step.
 
 ---
 
 ## Memory Budget
 
-*From verified pristine builds (NCS v3.3.0):*
+*Pre-refactor baselines (NCS v3.3.0, with Opus):*
 
 | Config                              | Board          | Flash used | Flash total | Headroom |
 |-------------------------------------|----------------|-----------|-------------|----------|
@@ -156,16 +194,23 @@ struct sdu_ref_msg { uint32_t tx_sync_ts_us; uint32_t curr_ts_us; bool adjust; }
 | gateway + opus (nRF7002DK)          | nRF7002DK      | 748 KB    | 1024 KB     | 276 KB   |
 | gateway + opus (nRF54LM20DK)        | nRF54LM20DK    | 722 KB    | 1940 KB     | 1218 KB  |
 
+Post-refactor memory budget will be measured in Phase 4. Target: P2P+PCM and STA+Opus
+each stay within NFR-002 limits (≤ 85% nRF5340, ≤ 70% nRF54LM20A).
+
 ---
 
-## Build Configurations
+## Build Configurations (Build Matrix)
 
-| Board target                         | Shield         | Role overlays                              | Board conf file                              |
-|--------------------------------------|----------------|--------------------------------------------|----------------------------------------------|
-| `nrf5340_audio_dk/nrf5340/cpuapp`   | `nrf7002ek`    | `overlay-opus.conf;overlay-audio-gateway.conf` | `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf` |
-| `nrf5340_audio_dk/nrf5340/cpuapp`   | `nrf7002ek`    | `overlay-opus.conf;overlay-audio-headset.conf` | same                                         |
-| `nrf7002dk/nrf5340/cpuapp`          | (none)         | `overlay-opus.conf;overlay-audio-gateway.conf` | `boards/nrf7002dk_nrf5340_cpuapp.conf`       |
-| `nrf54lm20dk/nrf54lm20a/cpuapp`     | `nrf7002eb2`   | `overlay-opus.conf;overlay-audio-gateway.conf` | `boards/nrf54lm20dk_nrf54lm20a_cpuapp.conf`  |
+| # | Role    | Board                    | Mode      | Codec | Priority | Overlays                                     |
+|---|---------|--------------------------|-----------|-------|----------|----------------------------------------------|
+| 1 | gateway | nRF5340 Audio DK + EK    | P2P_GO    | PCM   | P0 default | `overlay-audio-gateway.conf`              |
+| 2 | headset | nRF5340 Audio DK + EK    | P2P_CLIENT| PCM   | P0 default | `overlay-audio-headset.conf`              |
+| 3 | gateway | nRF5340 Audio DK + EK    | STA       | opus  | P0        | `overlay-audio-gateway.conf;overlay-opus.conf` |
+| 4 | headset | nRF5340 Audio DK + EK    | STA       | opus  | P0        | `overlay-audio-headset.conf;overlay-opus.conf` |
+| 5 | gateway | nRF5340 Audio DK + EK    | STA       | PCM   | P1        | `overlay-audio-gateway.conf`              |
+| 6 | headset | nRF5340 Audio DK + EK    | STA       | PCM   | P1        | `overlay-audio-headset.conf`              |
+| 7 | gateway | nRF7002DK                | P2P_GO    | PCM   | P2 (build)| `overlay-audio-gateway.conf`              |
+| ✗ | any     | any                      | P2P+opus  | —     | NEVER     | —                                            |
 
 ---
 
@@ -197,10 +242,10 @@ struct sdu_ref_msg { uint32_t tx_sync_ts_us; uint32_t curr_ts_us; bool adjust; }
 
 | Marker string                            | Expected at                                   |
 |------------------------------------------|-----------------------------------------------|
-| `NRF5340_WIFI_AUDIO_COMP_DATE=...`       | Build info printed at boot                    |
-| `Waiting for WiFi connection...`         | Before net interface up                       |
-| `WiFi connected`                         | After DHCP / SoftAP client joined             |
-| `Socket connected`                       | After UDP socket established                  |
-| `Audio stream started`                   | After encoder_start() called                  |
+| `[WiFi] Mode: P2P_GO` / `P2P_CLIENT`    | zego/wifi brick banner — mode selected        |
+| `[Network] WPA supplicant ready`         | zego/network brick internal                   |
+| `[Network] P2P GO started` / `P2P client connected` | zego/network — P2P link up         |
+| `[net_event_app] Connected — starting audio` | `zego_on_net_event_*` hook fired         |
+| `Audio stream started`                   | `audio_system_encoder_start()` called         |
 | `Drft comp state: CALIB`                | Drift compensation entering calibration       |
 | `Drft comp state: STEADY`               | Drift compensation converged (good sign)      |
