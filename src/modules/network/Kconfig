@@ -1,0 +1,81 @@
+#
+# Copyright (c) 2024 Nordic Semiconductor
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+#------------------------------------------------------------------------#
+menu "Socket Utilities"
+
+config SOCKET_UTILS
+	bool "Enable socket utilities module"
+	default y
+	help
+	  Enable socket utilities module for network communication.
+
+if SOCKET_UTILS
+
+config SOCKET_TYPE_UDP
+	bool "UDP socket"
+	default y
+	help
+	  Use UDP sockets for communication.
+
+choice SOCKET_ROLE
+	prompt "Socket role"
+	default SOCKET_ROLE_SERVER
+
+config SOCKET_ROLE_SERVER
+	bool "Socket server"
+	help
+	  Device acts as socket server.
+
+config SOCKET_ROLE_CLIENT
+	bool "Socket client"
+	help
+	  Device acts as socket client.
+
+endchoice # SOCKET_ROLE
+
+config SOCKET_STACK_SIZE
+	int "Socket thread stack size"
+	default 6144
+	help
+	  Stack size for socket thread.
+
+config SOCKET_UTILS_THREAD_PRIO
+	int "Socket thread priority"
+	default 3
+	help
+	  Priority for socket thread.
+
+config SOCKET_UTILS_LOG_LEVEL
+	int "Socket Utilities log level"
+	default 3
+	range 0 4
+	help
+	  Sets log level for Socket Utilities module.
+	  Levels are:
+	  - 0 OFF, do not write
+	  - 1 ERROR, only write LOG_ERR
+	  - 2 WARNING, write LOG_WRN in addition to previous level
+	  - 3 INFO, write LOG_INF in addition to previous levels
+	  - 4 DEBUG, write LOG_DBG in addition to previous levels
+
+menu "mDNS settings"
+  config MDNS_QUERY_NAME
+      string "mDNS query name"
+      default "zephyr"
+      help
+        Set the mDNS query name
+
+  config MDNS_QUERY_ATTEMPTS
+      int "mDNS query attempts"
+      default 5
+      help
+        Set the number of mDNS query attempts
+endmenu # "mDNS settings"
+
+endif # SOCKET_UTILS
+
+endmenu # "Socket Utilities"

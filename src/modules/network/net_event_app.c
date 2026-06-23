@@ -72,6 +72,8 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
 	pub_wifi_state(APP_WIFI_STATE_CONNECTED, mode);
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
+	socket_utils_signal_dhcp_bound();
+
 	if (mode == ZEGO_WIFI_MODE_P2P_CLIENT) {
 		/* P2P: no mDNS on the P2P link — use fixed GO IP directly. */
 		struct in_addr go_addr;
@@ -102,15 +104,18 @@ void zego_on_net_event_wifi_disconnect(void)
 	pub_wifi_state(APP_WIFI_STATE_ERROR, ZEGO_WIFI_MODE_STA);
 }
 
-void zego_on_net_event_wifi_ap_enabled(void)
+void zego_on_net_event_wifi_ap_enabled(enum zego_wifi_mode mode, const char *ip_addr,
+				       const char *ssid)
 {
+	ARG_UNUSED(mode);
+	ARG_UNUSED(ip_addr);
+	ARG_UNUSED(ssid);
 	LOG_INF("AP/P2P_GO enabled — waiting for client");
 }
 
-void zego_on_net_event_wifi_ap_sta_connected(int station_count, const struct in_addr *ip,
-					     const uint8_t *mac)
+void zego_on_net_event_wifi_ap_sta_connected(int sta_count)
 {
-	LOG_INF("AP/P2P_GO client joined (count=%d)", station_count);
+	LOG_INF("AP/P2P_GO client joined (count=%d)", sta_count);
 	/* dhcp_bound fires for the first client via zego/network brick and
 	 * handles audio start via the AUDIO_START_CMD path. */
 }

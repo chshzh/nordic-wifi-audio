@@ -32,6 +32,23 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(wifi_audio_transceiver)
 
+# Override the banner app name set by the zego wifi brick (which defaults to
+# the source folder name "nordic-wifi-audio") with a role-specific name.
+if(CONFIG_AUDIO_GATEWAY)
+        set(_zego_wifi_banner "nordic-wifi-audio(Gateway)")
+elseif(CONFIG_AUDIO_HEADSET)
+        set(_zego_wifi_banner "nordic-wifi-audio(Headset)")
+endif()
+if(DEFINED _zego_wifi_banner)
+        get_target_property(_wifi_defs ..__zego__bricks__wifi COMPILE_DEFINITIONS)
+        if(_wifi_defs)
+                list(FILTER _wifi_defs EXCLUDE REGEX "^ZEGO_BANNER_APP_NAME=")
+                list(APPEND _wifi_defs "ZEGO_BANNER_APP_NAME=\"${_zego_wifi_banner}\"")
+                set_target_properties(..__zego__bricks__wifi PROPERTIES
+                        COMPILE_DEFINITIONS "${_wifi_defs}")
+        endif()
+endif()
+
 string(TIMESTAMP NRF5340_AUDIO_CORE_APP_COMP_DATE "%a %b %d %H:%M:%S %Y")
 message(NRF5340_WIFI_AUDIO_COMP_DATE="${NRF5340_AUDIO_CORE_APP_COMP_DATE}")
 
@@ -56,7 +73,7 @@ zephyr_library_include_directories(
         include
         src
         src/audio
-        src/net
+        src/modules/network
         src/drivers
         src/modules
         src/utils
@@ -70,14 +87,14 @@ ${ZEPHYR_NRF_MODULE_DIR}/boards/arm/nrf5340_audio_dk_nrf5340)
 
 add_subdirectory(lib)
 add_subdirectory(src/audio)
-add_subdirectory(src/net)
 add_subdirectory(src/drivers)
 add_subdirectory(src/modules)
 add_subdirectory(src/utils)
 add_subdirectory(src/debug)
 
 # zego-brick app modules (added in refactor Step 3.2)
-target_sources(app PRIVATE src/modules/network/net_event_app.c)
+# network module: zego/network weak-hook overrides (net_event_app.c) + UDP transport (socket_utils.c)
+add_subdirectory(src/modules/network)
 add_subdirectory(src/modules/ux)
 
 ## Cirrus Logic

@@ -126,13 +126,20 @@ static void dnssd_service_cb(enum dns_resolve_status status, struct dns_addrinfo
 
 static int dns_sd_discover_gateway(void)
 {
-	struct dnssd_discovery_ctx ctx = {
-		.port = socket_port,
-	};
+	/* Static so the memory stays valid after we return.  The DNS resolver
+	 * holds a callback pointer into this struct (via user_data) and may
+	 * fire a final DNS_EAI_ALLDONE/CANCELED callback up to
+	 * DNS_SD_DISCOVERY_TIMEOUT_MS after the query was issued — after the
+	 * function has already returned.  A stack-allocated ctx would be
+	 * invalid by then, corrupting the k_sem wait-queue → BUS FAULT in
+	 * sys_dlist_remove.  Static allocation keeps the memory live. */
+	static struct dnssd_discovery_ctx ctx;
 	int err;
 	int retries;
 	char hostname[DNS_MAX_NAME_SIZE + 1];
 
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.port = socket_port;
 	k_sem_init(&ctx.done, 0, 1);
 
 	/* Step 1: Query PTR to discover service instances */
@@ -214,6 +221,13 @@ static int dns_sd_discover_gateway(void)
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 volatile bool serveraddr_set_signall = false;
+
+static K_SEM_DEFINE(s_dhcp_ready, 0, 1);
+
+void socket_utils_signal_dhcp_bound(void)
+{
+	k_sem_give(&s_dhcp_ready);
+}
 
 static socket_utils_target_ready_cb_t target_ready_cb;
 static bool socket_ready;
@@ -335,28 +349,12 @@ int socket_utils_tx_data(uint8_t *data, size_t length)
 	return bytes_sent;
 }
 
-#if defined(CONFIG_SOCKET_ROLE_SERVER)
-void socket_utils_softap_handle_disconnect(void)
-{
-	socket_connected_signall = false;
-	memset(&target_addr, 0, sizeof(target_addr));
-	target_addr_len = sizeof(target_addr);
-	LOG_INF("SoftAP client disconnected, socket target cleared");
-}
-#endif
-
 /* Thread to setup WiFi, Sockets step by step */
 void socket_utils_thread(void)
 {
 	int ret;
 
-	/* zego/network brick manages all Wi-Fi connectivity (WPA supplicant, P2P, DHCP).
-	 * When the network is ready, net_event_app.c weak hooks fire:
-	 *   - dhcp_bound: sets socket target address (P2P_CLIENT) and starts audio
-	 *   - wifi_ap_sta_connected: notifies gateway that a P2P client joined
-	 * No semaphore waits here — the socket thread starts immediately and the
-	 * CLIENT role waits for serveraddr_set_signall below. */
-	LOG_INF("Socket thread started — connectivity managed by zego/network brick");
+	LOG_INF("Socket thread started");
 
 	self_addr.sin_family = AF_INET;
 	self_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -365,6 +363,11 @@ void socket_utils_thread(void)
 	target_addr.sin_family = AF_INET;
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
+	/* Block until DHCP is bound so mDNS queries go out on a live interface. */
+	LOG_INF("Waiting for Wi-Fi DHCP...");
+	k_sem_take(&s_dhcp_ready, K_FOREVER);
+	LOG_INF("DHCP bound — starting gateway discovery");
+
 	if (!socket_utils_is_target_set()) {
 
 #if defined(CONFIG_DNS_SD) && defined(CONFIG_DNS_RESOLVER)

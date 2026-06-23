@@ -25,10 +25,6 @@ void socket_utils_set_rx_callback(net_util_socket_rx_callback_t socket_rx_callba
 int socket_utils_tx_data(uint8_t *data, size_t length);
 void socket_utils_thread(void);
 
-#if defined(CONFIG_SOCKET_ROLE_SERVER)
-void socket_utils_softap_handle_disconnect(void);
-#endif
-
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 bool socket_utils_is_target_set(void);
 void socket_utils_set_target_ipv4(const struct in_addr *addr);
@@ -36,10 +32,7 @@ void socket_utils_clear_target(void);
 
 typedef void (*socket_utils_target_ready_cb_t)(void);
 void socket_utils_set_target_ready_callback(socket_utils_target_ready_cb_t cb);
+void socket_utils_signal_dhcp_bound(void);
 #endif
-
-/* SoftAP helper functions */
-bool wifi_softap_has_connected_stations(void);
-int wifi_softap_wait_for_station(k_timeout_t timeout);
 
 #endif
