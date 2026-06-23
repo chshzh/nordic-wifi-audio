@@ -16,8 +16,8 @@
 
 #include "zbus_common.h"
 #include "nrf5340_audio_dk.h"
-#include "led.h"
-#include "button_assignments.h"
+/* led.h / button_assignments.h retired (Step 3.5) — zego bricks handle GPIO */
+#include "button.h"  /* zego button brick: BUTTON_CHAN, struct button_msg (new types) */
 #include "macros_common.h"
 #include "audio_system.h"
 #include "audio_datapath.h"
@@ -42,7 +42,7 @@ ZBUS_SUBSCRIBER_DEFINE(button_evt_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(le_audio_evt_sub);
 
-ZBUS_CHAN_DECLARE(button_chan);
+/* button_chan retired (Step 3.5) — use BUTTON_CHAN from zego/button brick */
 ZBUS_CHAN_DECLARE(le_audio_chan);
 
 ZBUS_OBS_DECLARE(sdu_ref_msg_listen);
@@ -79,10 +79,6 @@ void streamctrl_handle_client_disconnect(void)
 	LOG_INF("Station disconnected, pausing audio stream");
 	audio_system_encoder_stop();
 	stream_state_set(STATE_PAUSED);
-	int ret = led_on(LED_APP_1_BLUE);
-	if (ret) {
-		LOG_WRN("Failed to update status LED: %d", ret);
-	}
 }
 #endif
 
@@ -104,16 +100,14 @@ void socket_rx_handler(uint8_t *socket_rx_buf, size_t len)
 
 			switch (command) {
 			case AUDIO_START_CMD:
-				LOG_INF("STATE_STREAMING Command received\n");
+				LOG_INF("STATE_STREAMING Command received");
 				stream_state_set(STATE_STREAMING);
 				audio_system_encoder_start();
-				led_blink(LED_APP_1_BLUE);
 				break;
 			case AUDIO_STOP_CMD:
-				LOG_INF("STATE_PAUSED Command received\n");
+				LOG_INF("STATE_PAUSED Command received");
 				audio_system_encoder_stop();
 				stream_state_set(STATE_PAUSED);
-				led_on(LED_APP_1_BLUE);
 				break;
 			default:
 				LOG_INF("Unknown command received: 0x%02X\n", command);
@@ -134,8 +128,18 @@ void streamctrl_send(void const *const data, size_t size)
 	}
 }
 
+/*
+ * Button number assignments (zego BUTTON_CHAN, 0-based index):
+ *   0 = sw0: mode print/cycle (handled by ux.c)
+ *   1 = sw1: VOL_UP (unused in gateway)
+ *   2 = sw2: PLAY_PAUSE
+ *   3 = sw3: BTN4 / test tone
+ */
+#define APP_BTN_PLAY_PAUSE 2
+#define APP_BTN_TEST_TONE  3
+
 /**
- * @brief	Handle button activity.
+ * @brief	Handle audio button activity (BUTTON_CHAN from zego/button brick).
  */
 static void button_msg_sub_thread(void)
 {
@@ -151,30 +155,25 @@ static void button_msg_sub_thread(void)
 		ret = zbus_chan_read(chan, &msg, ZBUS_READ_TIMEOUT_MS);
 		ERR_CHK(ret);
 
-		LOG_DBG("Got btn evt from queue - id = %d, action = %d", msg.button_pin,
-			msg.button_action);
-
-		if (msg.button_action != BUTTON_PRESS) {
-			LOG_WRN("Unhandled button action");
-			return;
+		/* Only handle single-click gestures; long-press handled by ux.c */
+		if (msg.type != BUTTON_SINGLE_CLICK) {
+			continue;
 		}
 
-		switch (msg.button_pin) {
-		case BUTTON_PLAY_PAUSE:
+		LOG_DBG("Button %d single-click", msg.button_number);
+
+		switch (msg.button_number) {
+		case APP_BTN_PLAY_PAUSE:
 			if (socket_connected_signall == true) {
 				if (strm_state == STATE_STREAMING) {
 					audio_system_encoder_stop();
 					LOG_INF("STATE_PAUSED");
 					stream_state_set(STATE_PAUSED);
-					ret = led_on(LED_APP_1_BLUE);
-					ERR_CHK(ret);
 
 				} else if (strm_state == STATE_PAUSED) {
 					LOG_INF("STATE_STREAMING");
 					stream_state_set(STATE_STREAMING);
 					audio_system_encoder_start();
-					ret = led_blink(LED_APP_1_BLUE);
-					ERR_CHK(ret);
 
 				} else {
 					LOG_WRN("In invalid state: %d", strm_state);
@@ -183,7 +182,7 @@ static void button_msg_sub_thread(void)
 				LOG_WRN("Please wait for socket client to connect.");
 			}
 			break;
-		case BUTTON_4:
+		case APP_BTN_TEST_TONE:
 			if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
 				if (strm_state != STATE_STREAMING) {
 					LOG_WRN("Not in streaming state");
@@ -197,11 +196,11 @@ static void button_msg_sub_thread(void)
 
 				break;
 			}
-
 			break;
 
 		default:
-			LOG_WRN("Unexpected/unhandled button id: %d", msg.button_pin);
+			/* Button 0 handled by ux.c; others ignored */
+			break;
 		}
 
 		STACK_USAGE_PRINT("button_msg_thread", &button_msg_sub_thread_data);
@@ -237,8 +236,6 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 
@@ -254,8 +251,6 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 
@@ -318,7 +313,8 @@ static int zbus_link_producers_observers(void)
 		return -ENOTSUP;
 	}
 
-	ret = zbus_chan_add_obs(&button_chan, &button_evt_sub, ZBUS_ADD_OBS_TIMEOUT_MS);
+	/* BUTTON_CHAN from zego/button brick — ux.c handles btn 0; audio handles btns 2,3 */
+	ret = zbus_chan_add_obs(&BUTTON_CHAN, &button_evt_sub, ZBUS_ADD_OBS_TIMEOUT_MS);
 	if (ret) {
 		LOG_ERR("Failed to add button sub");
 		return ret;
@@ -377,8 +373,7 @@ int main(void)
 	ret = socket_utils_init();
 	ERR_CHK(ret);
 
-	/*indicate network is not connected*/
-	led_on(LED_NET_RGB, LED_COLOR_RED);
+	/* Network LED now driven by ux.c via APP_WIFI_STATE_CHAN (ROTATE = connecting) */
 	LOG_INF("audio_system_init");
 	ret = audio_system_init();
 	ERR_CHK(ret);

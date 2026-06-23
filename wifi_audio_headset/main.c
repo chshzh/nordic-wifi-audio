@@ -15,8 +15,8 @@
 #include <zephyr/sys/byteorder.h>
 #include "zbus_common.h"
 #include "nrf5340_audio_dk.h"
-#include "led.h"
-#include "button_assignments.h"
+/* led.h / button_assignments.h retired (Step 3.5) — zego bricks handle GPIO */
+#include "button.h"  /* zego button brick: BUTTON_CHAN, struct button_msg (new types) */
 #include "macros_common.h"
 #include "audio_system.h"
 #include "audio_datapath.h"
@@ -41,7 +41,7 @@ ZBUS_SUBSCRIBER_DEFINE(button_evt_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(le_audio_evt_sub);
 
-ZBUS_CHAN_DECLARE(button_chan);
+/* button_chan retired (Step 3.5) — use BUTTON_CHAN from zego/button brick */
 ZBUS_CHAN_DECLARE(le_audio_chan);
 ZBUS_CHAN_DECLARE(bt_mgmt_chan);
 // ZBUS_CHAN_DECLARE(sdu_ref_chan);
@@ -67,23 +67,9 @@ static void stream_state_set(enum stream_state stream_state_new);
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 static void socket_target_ready_handler(void)
 {
-	int ret;
-
-	if (strm_state == STATE_STREAMING) {
-		stream_state_set(STATE_PAUSED);
-		ret = led_on(LED_APP_1_BLUE);
-		if (ret) {
-			LOG_WRN("Failed to set LED on, ret: %d", ret);
-		}
-	}
-
 	LOG_INF("Socket target ready, auto-starting audio stream");
 	stream_state_set(STATE_STREAMING);
 	send_audio_command(AUDIO_START_CMD);
-	ret = led_blink(LED_APP_1_BLUE);
-	if (ret) {
-		LOG_WRN("Failed to set LED blink, ret: %d", ret);
-	}
 }
 #endif
 
@@ -119,8 +105,19 @@ void streamctrl_send(void const *const data, size_t size)
 	}
 }
 
+/*
+ * Button number assignments (zego BUTTON_CHAN, 0-based index):
+ *   0 = sw0: mode print/cycle (handled by ux.c)
+ *   1 = sw1: VOL_UP
+ *   2 = sw2: PLAY_PAUSE
+ *   3 = sw3: BTN4 / test tone
+ */
+#define APP_BTN_VOL_UP     1
+#define APP_BTN_PLAY_PAUSE 2
+#define APP_BTN_TEST_TONE  3
+
 /**
- * @brief	Handle button activity.
+ * @brief	Handle audio button activity (BUTTON_CHAN from zego/button brick).
  */
 static void button_msg_sub_thread(void)
 {
@@ -136,28 +133,23 @@ static void button_msg_sub_thread(void)
 		ret = zbus_chan_read(chan, &msg, ZBUS_READ_TIMEOUT_MS);
 		ERR_CHK(ret);
 
-		LOG_DBG("Got btn evt from queue - id = %d, action = %d", msg.button_pin,
-			msg.button_action);
-
-		if (msg.button_action != BUTTON_PRESS) {
-			LOG_WRN("Unhandled button action");
-			return;
+		/* Only handle single-click gestures; long-press handled by ux.c */
+		if (msg.type != BUTTON_SINGLE_CLICK) {
+			continue;
 		}
 
-		switch (msg.button_pin) {
-		case BUTTON_PLAY_PAUSE:
+		LOG_DBG("Button %d single-click", msg.button_number);
+
+		switch (msg.button_number) {
+		case APP_BTN_PLAY_PAUSE:
 			if (serveraddr_set_signall == true) {
 				if (strm_state == STATE_STREAMING) {
 					send_audio_command(AUDIO_STOP_CMD);
 					stream_state_set(STATE_PAUSED);
-					ret = led_on(LED_APP_1_BLUE);
-					ERR_CHK(ret);
 
 				} else if (strm_state == STATE_PAUSED) {
 					stream_state_set(STATE_STREAMING);
 					send_audio_command(AUDIO_START_CMD);
-					ret = led_blink(LED_APP_1_BLUE);
-					ERR_CHK(ret);
 
 				} else {
 					LOG_WRN("In invalid state: %d", strm_state);
@@ -167,7 +159,7 @@ static void button_msg_sub_thread(void)
 			}
 			break;
 
-		case BUTTON_4:
+		case APP_BTN_TEST_TONE:
 			if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
 				if (strm_state != STATE_STREAMING) {
 					LOG_WRN("Not in streaming state");
@@ -181,39 +173,22 @@ static void button_msg_sub_thread(void)
 
 				break;
 			}
-
 			break;
 
-		case BUTTON_VOLUME_UP:
+		case APP_BTN_VOL_UP:
 			if (strm_state != STATE_STREAMING) {
 				LOG_WRN("Not in streaming state");
 				break;
 			}
-			/* TODO: Should be implemented the same way as nrf5340_audio to
-			 * allow for bidirectional volume control, this is a temporary
-			 * solution */
 			ret = hw_codec_volume_increase();
 			if (ret) {
 				LOG_ERR("Failed to increase volume, ret: %d", ret);
 			}
 			break;
 
-		case BUTTON_VOLUME_DOWN:
-			if (strm_state != STATE_STREAMING) {
-				LOG_WRN("Not in streaming state");
-				break;
-			}
-			/* TODO: Should be implemented the same way as nrf5340_audio to
-			 * allow for bidirectional volume control, this is a temporary
-			 * solution */
-			ret = hw_codec_volume_decrease();
-			if (ret) {
-				LOG_ERR("Failed to decrease volume, ret: %d", ret);
-			}
-			break;
-
 		default:
-			LOG_WRN("Unexpected/unhandled button id: %d", msg.button_pin);
+			/* Button 0 handled by ux.c; others ignored */
+			break;
 		}
 
 		STACK_USAGE_PRINT("button_msg_thread", &button_msg_sub_thread_data);
@@ -249,8 +224,6 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_start();
 			stream_state_set(STATE_STREAMING);
-			ret = led_blink(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 
@@ -266,8 +239,6 @@ static void le_audio_msg_sub_thread(void)
 
 			stream_state_set(STATE_PAUSED);
 			audio_system_stop();
-			ret = led_on(LED_APP_1_BLUE);
-			ERR_CHK(ret);
 
 			break;
 
@@ -325,7 +296,7 @@ static int zbus_link_producers_observers(void)
 		return -ENOTSUP;
 	}
 
-	ret = zbus_chan_add_obs(&button_chan, &button_evt_sub, ZBUS_ADD_OBS_TIMEOUT_MS);
+	ret = zbus_chan_add_obs(&BUTTON_CHAN, &button_evt_sub, ZBUS_ADD_OBS_TIMEOUT_MS);
 	if (ret) {
 		LOG_ERR("Failed to add button sub");
 		return ret;
@@ -381,8 +352,7 @@ int main(void)
 	ret = fw_info_app_print();
 	ERR_CHK(ret);
 
-	/*indicate network is not connected*/
-	led_on(LED_NET_RGB, LED_COLOR_RED);
+	/* Network LED driven by ux.c via APP_WIFI_STATE_CHAN (ROTATE = connecting) */
 	ret = socket_utils_init();
 	ERR_CHK(ret);
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)

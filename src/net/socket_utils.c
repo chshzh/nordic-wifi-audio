@@ -20,8 +20,7 @@ LOG_MODULE_REGISTER(socket_utils, CONFIG_SOCKET_UTILS_LOG_LEVEL);
 #include <zephyr/shell/shell.h>
 #include <zephyr/net/dns_sd.h>
 #include "socket_utils.h"
-#include "net_event_mgmt.h"
-#include "wifi_utils.h"
+/* net_event_mgmt.h and wifi_utils.h retired (Step 3.3) — zego/network brick owns these */
 
 #include <zephyr/net/dns_resolve.h>
 
@@ -53,11 +52,7 @@ DNS_SD_REGISTER_UDP_SERVICE(audio_service, CONFIG_NET_HOSTNAME, DNS_SD_SERVICE_T
 			    DNS_SD_SERVICE_DOMAIN, audio_service_txt, socket_port);
 #endif
 
-/**********External Resources START**************/
-#if IS_ENABLED(CONFIG_WIFI_NM_WPA_SUPPLICANT_AP)
-extern struct k_sem station_connected_sem;
-#endif
-/**********External Resources END**************/
+/* station_connected_sem retired — zego/network brick handles station events */
 static int udp_socket;
 struct sockaddr_in self_addr;
 char target_addr_str[32];
@@ -355,77 +350,13 @@ void socket_utils_thread(void)
 {
 	int ret;
 
-	ret = init_network_events();
-	if (ret) {
-		LOG_ERR("Failed to initialize network events: %d", ret);
-		return;
-	}
-	k_sem_take(&wpa_supplicant_ready_sem, K_FOREVER);
-
-#if IS_ENABLED(CONFIG_WIFI_NM_WPA_SUPPLICANT_AP)
-	/* Device in SoftAP mode */
-	LOG_INF("Wi-Fi Mode: SoftAP mode");
-
-	ret = wifi_run_softap_mode();
-	if (ret) {
-		LOG_ERR("Failed to setup SoftAP mode: %d", ret);
-		return;
-	}
-
-	ret = k_sem_take(&ipv4_dhcp_bond_sem, K_FOREVER);
-	if (ret != 0) {
-		LOG_ERR("Failed to wait for SoftAP network setup: %d", ret);
-		return;
-	}
-
-	wifi_print_status();
-
-	LOG_INF("SoftAP setup complete, waiting for station to connect...");
-	LOG_INF("SSID: %s", CONFIG_SOFTAP_SSID);
-	LOG_INF("Password: %s", CONFIG_SOFTAP_PASSWORD);
-	LOG_INF("Socket server will start once a station connects");
-	LOG_INF("Headset can connect using: wifi cred add -s %s -k 1 -p %s", CONFIG_SOFTAP_SSID,
-		CONFIG_SOFTAP_PASSWORD);
-
-	ret = k_sem_take(&station_connected_sem, K_FOREVER);
-	if (ret) {
-		LOG_ERR("Error waiting for station connection: %d", ret);
-		return;
-	}
-
-	LOG_INF("Station connected! Starting socket server...");
-
-#else
-	/* Device in station mode */
-	LOG_INF("Wi-Fi Mode: Station mode");
-#if IS_ENABLED(CONFIG_WIFI_CREDENTIALS_STATIC)
-	LOG_INF("Static Wi-Fi credentials configured for connection.");
-#elif IS_ENABLED(CONFIG_WIFI_CREDENTIALS_SHELL)
-	LOG_INF("Please use \"wifi cred\" shell commands set up Wi-Fi connection.");
-#else
-	LOG_INF("No Proper Wi-Fi credentials configured, try to configure with "
-		"CONFIG_WIFI_CREDENTIALS_STATIC or CONFIG_WIFI_CREDENTIALS_SHELL");
-#endif /* IS_ENABLED(CONFIG_WIFI_CREDENTIALS_STATIC) */
-#if IS_ENABLED(CONFIG_SOCKET_ROLE_CLIENT)
-	int auto_ret = wifi_utils_auto_connect_stored();
-	if (auto_ret && auto_ret != -EALREADY && auto_ret != -ENOTSUP) {
-		LOG_WRN("Auto-connect to stored credentials failed: %d", auto_ret);
-	}
-#endif
-	ret = conn_mgr_all_if_connect(true);
-	if (ret) {
-		LOG_ERR("Failed to initiate network connection: %d", ret);
-		return;
-	}
-	ret = k_sem_take(&ipv4_dhcp_bond_sem, K_FOREVER);
-	if (ret != 0) {
-		LOG_ERR("Failed to wait for network connectivity: %d", ret);
-		return;
-	}
-
-	LOG_INF("Network connectivity established, setting up sockets...");
-
-#endif /* IS_ENABLED(CONFIG_WIFI_NM_WPA_SUPPLICANT_AP) */
+	/* zego/network brick manages all Wi-Fi connectivity (WPA supplicant, P2P, DHCP).
+	 * When the network is ready, net_event_app.c weak hooks fire:
+	 *   - dhcp_bound: sets socket target address (P2P_CLIENT) and starts audio
+	 *   - wifi_ap_sta_connected: notifies gateway that a P2P client joined
+	 * No semaphore waits here — the socket thread starts immediately and the
+	 * CLIENT role waits for serveraddr_set_signall below. */
+	LOG_INF("Socket thread started — connectivity managed by zego/network brick");
 
 	self_addr.sin_family = AF_INET;
 	self_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -468,8 +399,19 @@ void socket_utils_thread(void)
 		LOG_DBG("Target address already provisioned; skipping DNS-SD lookup");
 	}
 
+	/* Wait for target address, retrying mDNS periodically for STA mode.
+	 * Pre-refactor, this section was gated by ipv4_dhcp_bond_sem so mDNS
+	 * only ran after DHCP was assigned. Now the socket thread starts before
+	 * DHCP completes, so initial mDNS attempts may fail. Retry every 5 s
+	 * until the address is set (by mDNS success or by the P2P dhcp_bound hook). */
 	while (!serveraddr_set_signall) {
-		k_sleep(K_MSEC(100));
+		k_sleep(K_SECONDS(5));
+		if (!socket_utils_is_target_set()) {
+#if defined(CONFIG_DNS_SD) && defined(CONFIG_DNS_RESOLVER)
+			LOG_INF("Retrying mDNS discovery...");
+			dns_sd_discover_gateway();
+#endif
+		}
 	}
 	LOG_INF("Target address is set. Initializing socket transport");
 #elif defined(CONFIG_SOCKET_ROLE_SERVER)
@@ -562,17 +504,7 @@ static int cmd_set_target_address(const struct shell *shell, size_t argc, const 
 		return -1;
 	}
 
-	// Check if WiFi is connected and IP address is assigned
-	if (!net_event_mgmt_is_connected()) {
-		shell_error(shell, "Error: WiFi is not connected or IP address not assigned.");
-		shell_print(shell, "Please connect to WiFi first using:");
-		shell_print(shell, "  wifi cred add -s <SSID> -p <password> -k 1");
-		shell_print(shell, "  wifi cred auto_connect");
-		shell_print(
-			shell,
-			"Wait for 'Network DHCP bound!' message before setting target address.");
-		return -ENOTCONN;
-	}
+	/* Connectivity check moved to zego/network brick; proceed with address parsing. */
 
 	char *target_addr_str = (char *)k_malloc(22); // Allocate memory for the string
 
