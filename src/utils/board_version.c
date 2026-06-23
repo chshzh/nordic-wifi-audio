@@ -156,8 +156,7 @@ int board_version_valid_check(void)
 	}
 
 	if (BOARD_VERSION_VALID_MSK & (board_rev.mask)) {
-		LOG_INF(COLOR_GREEN "Compatible board/HW version found: %s" COLOR_RESET,
-			board_rev.name);
+		LOG_INF("Compatible board/HW version found: %s", board_rev.name);
 	} else {
 		LOG_ERR("Invalid board found, rev: %s Valid mask: 0x%x valid mask: 0x%lx",
 			board_rev.name, board_rev.mask, BOARD_VERSION_VALID_MSK);

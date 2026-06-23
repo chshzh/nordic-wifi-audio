@@ -17,12 +17,12 @@
 #include "zbus_common.h"
 #include "nrf5340_audio_dk.h"
 /* led.h / button_assignments.h retired (Step 3.5) — zego bricks handle GPIO */
-#include "button.h"  /* zego button brick: BUTTON_CHAN, struct button_msg (new types) */
+#include "button.h" /* zego button brick: BUTTON_CHAN, struct button_msg (new types) */
 #include "macros_common.h"
 #include "audio_system.h"
 #include "audio_datapath.h"
 
-#include <wifi.h>  /* zego wifi brick: zego_wifi_print_banner() */
+#include <wifi.h> /* zego wifi brick: zego_wifi_print_banner() */
 #include "streamctrl.h"
 #include "socket_utils.h"
 #include "wifi_audio_rx.h"
@@ -353,7 +353,6 @@ int socket_utils_init(void)
 int main(void)
 {
 	int ret;
-	LOG_INF("WiFi Audio Transceiver Start!");
 
 #ifdef CONFIG_HEAPS_MONITOR
 	/* Initialize heap monitoring system */
