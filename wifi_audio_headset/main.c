@@ -20,7 +20,7 @@
 #include "macros_common.h"
 #include "audio_system.h"
 #include "audio_datapath.h"
-#include "fw_info_app.h"
+#include <wifi.h>  /* zego wifi brick: zego_wifi_print_banner() */
 #include "streamctrl.h"
 #include "socket_utils.h"
 #include "wifi_audio_rx.h"
@@ -349,8 +349,7 @@ int main(void)
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
 
-	ret = fw_info_app_print();
-	ERR_CHK(ret);
+	zego_wifi_print_banner();
 
 	/* Network LED driven by ux.c via APP_WIFI_STATE_CHAN (ROTATE = connecting) */
 	ret = socket_utils_init();
