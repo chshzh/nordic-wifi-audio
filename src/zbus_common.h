@@ -25,14 +25,7 @@ enum bt_audio_dir {
 
 /***** Messages for zbus ******/
 
-enum button_action {
-	BUTTON_PRESS = 1,
-};
-
-struct button_msg {
-	uint32_t button_pin;
-	enum button_action button_action;
-};
+/* button_msg / button_action retired in Step 3.5 — use zego button.h (BUTTON_CHAN) instead */
 
 enum le_audio_evt_type {
 	LE_AUDIO_EVT_CONFIG_RECEIVED = 1,

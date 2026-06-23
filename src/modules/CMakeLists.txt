@@ -7,8 +7,7 @@
 # audio_i2s.c uses nrfx_i2s and NRF_I2S0 which are only available on nRF5340
 target_sources_ifdef(CONFIG_NRFX_I2S app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/audio_i2s.c)
 target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/audio_usb.c)
-target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/button_handler.c)
-target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/led.c)
+# button_handler.c and led.c retired in Step 3.5 — zego/button and zego/led bricks replace them
 # audio_sync_timer.c uses NRF_RTC0 and RTC0_IRQn; only compile on SoCs with RTC
 target_sources_ifdef(CONFIG_AUDIO_SYNC_TIMER_USES_RTC app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/audio_sync_timer.c)
 
