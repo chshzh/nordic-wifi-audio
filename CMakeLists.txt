@@ -85,12 +85,10 @@ zephyr_library_include_directories(
 zephyr_library_include_directories(app PRIVATE
 ${ZEPHYR_NRF_MODULE_DIR}/boards/arm/nrf5340_audio_dk_nrf5340)
 
-add_subdirectory(lib)
 add_subdirectory(src/audio)
 add_subdirectory(src/drivers)
 add_subdirectory(src/modules)
 add_subdirectory(src/utils)
-add_subdirectory(src/debug)
 
 # zego-brick app modules (added in refactor Step 3.2)
 # network module: zego/network weak-hook overrides (net_event_app.c) + UDP transport (socket_utils.c)
