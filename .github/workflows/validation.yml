@@ -1,0 +1,155 @@
+name: Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+# Cancel any in-progress run for the same branch/PR to avoid wasting CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  set-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      NCS_VERSION: ${{ steps.extract-version.outputs.NCS_VERSION }}
+      TOOLCHAIN_VERSION: ${{ steps.extract-version.outputs.TOOLCHAIN_VERSION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: app-workspace/nordic-wifi-audio
+
+      - name: Extract NCS version from west.yml
+        id: extract-version
+        working-directory: app-workspace/nordic-wifi-audio
+        run: |
+          NCS_VERSION=$(awk '
+            $1=="-" && $2=="name:" && $3=="sdk-nrf" { in_sdk=1; next }
+            in_sdk && $1=="revision:" { print $2; exit }
+          ' west.yml)
+          if [ -z "${NCS_VERSION}" ]; then
+            echo "Failed to extract sdk-nrf revision from west.yml" >&2
+            exit 1
+          fi
+          echo "NCS_VERSION=${NCS_VERSION}" >> $GITHUB_OUTPUT
+          # The toolchain Docker image tag matches the NCS revision exactly.
+          echo "TOOLCHAIN_VERSION=${NCS_VERSION}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: set-version
+    runs-on: ubuntu-24.04
+    container: ghcr.io/nrfconnect/sdk-nrf-toolchain:${{ needs.set-version.outputs.TOOLCHAIN_VERSION }}
+    defaults:
+      run:
+        # Bash shell is needed to set toolchain env vars in the container
+        # (workaround for https://github.com/actions/runner/issues/1964).
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # ---- Default dual-mode firmware (P2P + STA-with-mDNS), built WITH the wifi-p2p snippet ----
+          - name: "Gateway · nRF5340 Audio DK (dual-mode)"
+            build_dir: "build_gateway_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+          - name: "Headset · nRF5340 Audio DK (dual-mode)"
+            build_dir: "build_headset_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-headset.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+          - name: "Gateway · nRF7002DK (dual-mode)"
+            build_dir: "build_gateway_nrf7002dk"
+            board: "nrf7002dk/nrf5340/cpuapp"
+            shield: ""
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+          - name: "Gateway · nRF54LM20DK + nRF7002EB2 (dual-mode)"
+            build_dir: "build_gateway_nrf54lm20dk"
+            board: "nrf54lm20dk/nrf54lm20a/cpuapp"
+            shield: "-DSHIELD=nrf7002eb2"
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+          # ---- Extra coverage: STA-only (no snippet) and Opus paths must keep compiling ----
+          - name: "Headset · nRF5340 Audio DK (STA-only, no snippet)"
+            build_dir: "build_headset_sta_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-headset.conf"
+            snippet: ""
+          - name: "Gateway · nRF5340 Audio DK (STA + Opus)"
+            build_dir: "build_gateway_opus_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-gateway.conf;overlay-opus.conf"
+            snippet: ""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: app-workspace/nordic-wifi-audio
+
+      - name: Cache west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            app-workspace/.west
+            app-workspace/nrf
+            app-workspace/zephyr
+            app-workspace/modules
+            app-workspace/nrfxlib
+            app-workspace/bootloader
+            app-workspace/zego
+          key: west-${{ needs.set-version.outputs.NCS_VERSION }}-${{ hashFiles('app-workspace/nordic-wifi-audio/west.yml') }}
+
+      - name: Prepare west workspace
+        working-directory: app-workspace
+        run: |
+          grep -q 'base = zephyr' .west/config 2>/dev/null || \
+            west init -l nordic-wifi-audio
+          west update -o=--depth=1 -n
+
+      - name: Build · ${{ matrix.config.name }}
+        working-directory: app-workspace/nordic-wifi-audio
+        run: |
+          west build -p -b ${{ matrix.config.board }} -d ${{ matrix.config.build_dir }} -- \
+            ${{ matrix.config.shield }} \
+            -DEXTRA_CONF_FILE="${{ matrix.config.overlay }}" \
+            ${{ matrix.config.snippet }}
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch Zephyr checkpatch
+        run: |
+          git clone --depth=1 https://github.com/zephyrproject-rtos/zephyr.git /tmp/zephyr
+          chmod +x /tmp/zephyr/scripts/checkpatch.pl
+
+      - name: Run Zephyr checkpatch
+        run: |
+          echo "Running Zephyr checkpatch on source files..."
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            git diff HEAD~1 | /tmp/zephyr/scripts/checkpatch.pl --no-tree - || true
+          else
+            echo "Single commit — checking all source files..."
+            if [ -d src/ ]; then
+              find src/ \( -name "*.c" -o -name "*.h" \) | while read -r file; do
+                echo "Checking $file..."
+                /tmp/zephyr/scripts/checkpatch.pl --no-tree --file "$file" || true
+              done
+            fi
+          fi
+          echo "Checkpatch analysis completed ✓"

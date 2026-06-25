@@ -1,0 +1,307 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # e.g. v3.3.0.1, v3.3.0.2
+
+# Cancel any in-progress run for the same tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  set-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      NCS_VERSION: ${{ steps.extract-version.outputs.NCS_VERSION }}
+      TOOLCHAIN_VERSION: ${{ steps.extract-version.outputs.TOOLCHAIN_VERSION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: app-workspace/nordic-wifi-audio
+
+      - name: Extract NCS version from west.yml
+        id: extract-version
+        working-directory: app-workspace/nordic-wifi-audio
+        run: |
+          NCS_VERSION=$(awk '
+            $1=="-" && $2=="name:" && $3=="sdk-nrf" { in_sdk=1; next }
+            in_sdk && $1=="revision:" { print $2; exit }
+          ' west.yml)
+          if [ -z "${NCS_VERSION}" ]; then
+            echo "Failed to extract sdk-nrf revision from west.yml" >&2
+            exit 1
+          fi
+          echo "NCS_VERSION=${NCS_VERSION}" >> $GITHUB_OUTPUT
+          echo "TOOLCHAIN_VERSION=${NCS_VERSION}" >> $GITHUB_OUTPUT
+
+  build-release:
+    needs: set-version
+    runs-on: ubuntu-24.04
+    container: ghcr.io/nrfconnect/sdk-nrf-toolchain:${{ needs.set-version.outputs.TOOLCHAIN_VERSION }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # Default dual-mode firmware (P2P + STA-with-mDNS), built WITH the wifi-p2p snippet.
+          - name: "Gateway · nRF5340 Audio DK + nRF7002EK"
+            build_dir: "build_gateway_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+            artifact_suffix: "gateway-nrf5340-audio-dk"
+            board_qual: "nrf5340_audio_dk_nrf5340_cpuapp"
+          - name: "Headset · nRF5340 Audio DK + nRF7002EK"
+            build_dir: "build_headset_nrf5340audiodk"
+            board: "nrf5340_audio_dk/nrf5340/cpuapp"
+            shield: "-DSHIELD=nrf7002ek"
+            overlay: "overlay-audio-headset.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+            artifact_suffix: "headset-nrf5340-audio-dk"
+            board_qual: "nrf5340_audio_dk_nrf5340_cpuapp"
+          - name: "Gateway · nRF7002DK"
+            build_dir: "build_gateway_nrf7002dk"
+            board: "nrf7002dk/nrf5340/cpuapp"
+            shield: ""
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+            artifact_suffix: "gateway-nrf7002dk"
+            board_qual: "nrf7002dk_nrf5340_cpuapp"
+          - name: "Gateway · nRF54LM20DK + nRF7002EB2"
+            build_dir: "build_gateway_nrf54lm20dk"
+            board: "nrf54lm20dk/nrf54lm20a/cpuapp"
+            shield: "-DSHIELD=nrf7002eb2"
+            overlay: "overlay-audio-gateway.conf"
+            snippet: "-Dnordic-wifi-audio_SNIPPET=wifi-p2p"
+            artifact_suffix: "gateway-nrf54lm20dk"
+            board_qual: "nrf54lm20dk_nrf54lm20a_cpuapp"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: app-workspace/nordic-wifi-audio
+          fetch-depth: 0
+
+      - name: Cache west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            app-workspace/.west
+            app-workspace/nrf
+            app-workspace/zephyr
+            app-workspace/modules
+            app-workspace/nrfxlib
+            app-workspace/bootloader
+            app-workspace/zego
+          key: west-${{ needs.set-version.outputs.NCS_VERSION }}-${{ hashFiles('app-workspace/nordic-wifi-audio/west.yml') }}
+
+      - name: Prepare west workspace
+        working-directory: app-workspace
+        run: |
+          grep -q 'base = zephyr' .west/config 2>/dev/null || \
+            west init -l nordic-wifi-audio
+          west update -o=--depth=1 -n
+
+      - name: Extract version from tag
+        id: ver
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          VERSION="${REF#refs/tags/}"
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building release ${VERSION}"
+
+      - name: Build · ${{ matrix.config.name }}
+        working-directory: app-workspace/nordic-wifi-audio
+        env:
+          VER: ${{ steps.ver.outputs.VERSION }}
+        run: |
+          set -o pipefail
+          west build -p -b ${{ matrix.config.board }} -d ${{ matrix.config.build_dir }} -- \
+            ${{ matrix.config.shield }} \
+            -DEXTRA_CONF_FILE="${{ matrix.config.overlay }}" \
+            ${{ matrix.config.snippet }} \
+            -DAPP_VERSION_STRING="${VER}" 2>&1 | tee ${{ matrix.config.build_dir }}/build.log
+
+      - name: Resolve merged hex — ${{ matrix.config.name }}
+        working-directory: app-workspace/nordic-wifi-audio
+        run: |
+          BUILD_DIR="${{ matrix.config.build_dir }}"
+          MERGED="${BUILD_DIR}/merged.hex"
+          BOARD_QUAL="${{ matrix.config.board_qual }}"
+          APP_HEX="${BUILD_DIR}/merged_${BOARD_QUAL}.hex"
+          NET_HEX="${BUILD_DIR}/merged_${BOARD_QUAL/cpuapp/cpunet}.hex"
+          if [ -f "${MERGED}" ]; then
+            echo "merged.hex already exists"
+          elif [ -f "${APP_HEX}" ] && [ -f "${NET_HEX}" ]; then
+            python3 -c "import sys; from intelhex import IntelHex; a=IntelHex(); a.loadhex(sys.argv[1]); n=IntelHex(); n.loadhex(sys.argv[2]); a.merge(n,overlap='replace'); a.write_hex_file(sys.argv[3])" "${APP_HEX}" "${NET_HEX}" "${MERGED}"
+            echo "Combined app+net → merged.hex"
+          elif [ -f "${APP_HEX}" ]; then
+            cp "${APP_HEX}" "${MERGED}"
+            echo "Collected ${APP_HEX} (single-core board)"
+          else
+            echo "merged.hex not found — available hex files:"
+            find "${BUILD_DIR}" -name "*.hex" | head -20
+            ZHEX="${BUILD_DIR}/nordic-wifi-audio/zephyr/zephyr.hex"
+            [ -f "${ZHEX}" ] && cp "${ZHEX}" "${MERGED}" && echo "Fallback: zephyr.hex" || { echo "ERROR: no hex found"; exit 1; }
+          fi
+
+      - name: Extract memory usage — ${{ matrix.config.name }}
+        working-directory: app-workspace/nordic-wifi-audio
+        run: |
+          BUILD_LOG="${{ matrix.config.build_dir }}/build.log"
+          ROM_USAGE="$(awk '/^[[:space:]]*FLASH:/ {
+            n=$2+0; if (n>max_f) { max_f=n; line_f=$2 " " $3 " / " $4 " " $5 " (" $6 ")" }
+          } END { print line_f }' "$BUILD_LOG")"
+          RAM_USAGE="$(awk '/^[[:space:]]*RAM:/ {
+            n=$2+0; if (n>max_r) { max_r=n; line_r=$2 " " $3 " / " $4 " " $5 " (" $6 ")" }
+          } END { print line_r }' "$BUILD_LOG")"
+          : "${ROM_USAGE:=n/a}"
+          : "${RAM_USAGE:=n/a}"
+          printf "ROM_USAGE=%s\nRAM_USAGE=%s\n" "$ROM_USAGE" "$RAM_USAGE" > usage.txt
+          echo "${{ matrix.config.name }}  ROM: $ROM_USAGE | RAM: $RAM_USAGE"
+
+      - name: Stage release artifacts — ${{ matrix.config.name }}
+        working-directory: app-workspace/nordic-wifi-audio
+        env:
+          VER: ${{ steps.ver.outputs.VERSION }}
+        run: |
+          STAGE="stage-${{ matrix.config.artifact_suffix }}"
+          mkdir -p "$STAGE"
+          cp ${{ matrix.config.build_dir }}/merged.hex \
+             "$STAGE/nordic-wifi-audio-${{ matrix.config.artifact_suffix }}-${VER}.hex"
+          ELF="${{ matrix.config.build_dir }}/nordic-wifi-audio/zephyr/zephyr.elf"
+          [ -f "$ELF" ] && cp "$ELF" \
+             "$STAGE/nordic-wifi-audio-${{ matrix.config.artifact_suffix }}-${VER}.elf" || \
+             echo "Warning: zephyr.elf not found for ${{ matrix.config.name }}"
+          cp usage.txt "$STAGE/usage.txt"
+
+      - name: Upload release artifacts — ${{ matrix.config.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-build-${{ matrix.config.artifact_suffix }}
+          path: app-workspace/nordic-wifi-audio/stage-${{ matrix.config.artifact_suffix }}/
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch Zephyr checkpatch
+        run: |
+          git clone --depth=1 https://github.com/zephyrproject-rtos/zephyr.git /tmp/zephyr
+          chmod +x /tmp/zephyr/scripts/checkpatch.pl
+
+      - name: Run Zephyr checkpatch
+        run: |
+          echo "Running Zephyr checkpatch on source files..."
+          if [ -d src/ ]; then
+            find src/ \( -name "*.c" -o -name "*.h" \) | while read -r file; do
+              echo "Checking $file..."
+              /tmp/zephyr/scripts/checkpatch.pl --no-tree --file "$file" || true
+            done
+          fi
+          echo "Checkpatch analysis completed ✓"
+
+  create-release:
+    needs: [set-version, build-release, static-analysis]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: ver
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          VERSION="${REF#refs/tags/}"
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-build-*
+          path: release/
+          merge-multiple: false
+
+      - name: Generate changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            echo "Initial release of Nordic Wi-Fi Audio" > /tmp/changelog.txt
+          else
+            echo "Generating changelog from $PREV_TAG to ${{ steps.ver.outputs.VERSION }}"
+            git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" > /tmp/changelog.txt
+          fi
+
+      - name: Prepare release body
+        env:
+          VER: ${{ steps.ver.outputs.VERSION }}
+          NCS_VERSION: ${{ needs.set-version.outputs.NCS_VERSION }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          read_usage() {
+            local dir="$1" key="$2"
+            grep "^${key}=" "release/${dir}/usage.txt" 2>/dev/null | cut -d= -f2-
+          }
+          DL_BASE="${REPO_URL}/releases/download/${VER}"
+
+          GW5340_ROM="$(read_usage release-build-gateway-nrf5340-audio-dk ROM_USAGE)"
+          GW5340_RAM="$(read_usage release-build-gateway-nrf5340-audio-dk RAM_USAGE)"
+          HS5340_ROM="$(read_usage release-build-headset-nrf5340-audio-dk ROM_USAGE)"
+          HS5340_RAM="$(read_usage release-build-headset-nrf5340-audio-dk RAM_USAGE)"
+          GW7002_ROM="$(read_usage release-build-gateway-nrf7002dk ROM_USAGE)"
+          GW7002_RAM="$(read_usage release-build-gateway-nrf7002dk RAM_USAGE)"
+          GW54LM_ROM="$(read_usage release-build-gateway-nrf54lm20dk ROM_USAGE)"
+          GW54LM_RAM="$(read_usage release-build-gateway-nrf54lm20dk RAM_USAGE)"
+          : "${GW5340_ROM:=n/a}" "${GW5340_RAM:=n/a}" "${HS5340_ROM:=n/a}" "${HS5340_RAM:=n/a}"
+          : "${GW7002_ROM:=n/a}" "${GW7002_RAM:=n/a}" "${GW54LM_ROM:=n/a}" "${GW54LM_RAM:=n/a}"
+
+          cat > /tmp/release-body.txt <<EOF
+          ## Nordic Wi-Fi Audio ${VER}
+
+          > Built with NCS ${NCS_VERSION}. Default dual-mode firmware (Wi-Fi Direct P2P + infrastructure STA with mDNS auto-discovery) — switch modes at runtime with \`zego_wifi_mode\` or a Button 0 long-press.
+
+          ### 📦 Firmware Files
+
+          | Board | Role | Flash image | Symbols | ROM | RAM |
+          |-------|------|-------------|---------|-----|-----|
+          | nRF5340 Audio DK + nRF7002EK | Gateway | [.hex](${DL_BASE}/nordic-wifi-audio-gateway-nrf5340-audio-dk-${VER}.hex) | [.elf](${DL_BASE}/nordic-wifi-audio-gateway-nrf5340-audio-dk-${VER}.elf) | ${GW5340_ROM} | ${GW5340_RAM} |
+          | nRF5340 Audio DK + nRF7002EK | Headset | [.hex](${DL_BASE}/nordic-wifi-audio-headset-nrf5340-audio-dk-${VER}.hex) | [.elf](${DL_BASE}/nordic-wifi-audio-headset-nrf5340-audio-dk-${VER}.elf) | ${HS5340_ROM} | ${HS5340_RAM} |
+          | nRF7002DK | Gateway | [.hex](${DL_BASE}/nordic-wifi-audio-gateway-nrf7002dk-${VER}.hex) | [.elf](${DL_BASE}/nordic-wifi-audio-gateway-nrf7002dk-${VER}.elf) | ${GW7002_ROM} | ${GW7002_RAM} |
+          | nRF54LM20DK + nRF7002EB2 | Gateway | [.hex](${DL_BASE}/nordic-wifi-audio-gateway-nrf54lm20dk-${VER}.hex) | [.elf](${DL_BASE}/nordic-wifi-audio-gateway-nrf54lm20dk-${VER}.elf) | ${GW54LM_ROM} | ${GW54LM_RAM} |
+
+          Headset role is nRF5340 Audio DK only. Flash one board as Gateway and a second as Headset; on fresh flash they pair automatically over Wi-Fi Direct (192.168.7.1 / 192.168.7.2). See the [Build](${REPO_URL}/blob/main/README.md#build) and [Evaluator Quick Start](${REPO_URL}/blob/main/README.md#evaluator-quick-start) sections in the README.
+
+          ### 📝 Changes Since Last Release
+
+          EOF
+          cat /tmp/changelog.txt >> /tmp/release-body.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Nordic Wi-Fi Audio ${{ steps.ver.outputs.VERSION }}"
+          body_path: /tmp/release-body.txt
+          files: |
+            release/**/*.hex
+            release/**/*.elf
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
