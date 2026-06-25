@@ -9,7 +9,7 @@
  *
  * Button 0 gesture → action mapping:
  *   SINGLE_CLICK  Print current Wi-Fi mode to UART log.
- *   LONG_PRESS    Cycle Wi-Fi mode STA → P2P_GO → P2P_CLIENT → STA,
+ *   LONG_PRESS    Cycle Wi-Fi mode STA → P2P_GO → P2P_GC → STA,
  *                 save to NVS via settings, reboot.
  *
  * LED 0 state machine driven by APP_WIFI_STATE_CHAN:
@@ -46,7 +46,7 @@ LOG_MODULE_REGISTER(app_ux, LOG_LEVEL_INF);
 static const enum zego_wifi_mode mode_cycle[] = {
 	ZEGO_WIFI_MODE_STA,
 	ZEGO_WIFI_MODE_P2P_GO,
-	ZEGO_WIFI_MODE_P2P_CLIENT,
+	ZEGO_WIFI_MODE_P2P_GC,
 };
 
 static const char *mode_name(enum zego_wifi_mode m)
@@ -58,8 +58,8 @@ static const char *mode_name(enum zego_wifi_mode m)
 		return "softap";
 	case ZEGO_WIFI_MODE_P2P_GO:
 		return "p2p_go";
-	case ZEGO_WIFI_MODE_P2P_CLIENT:
-		return "p2p_client";
+	case ZEGO_WIFI_MODE_P2P_GC:
+		return "p2p_gc";
 	default:
 		return "unknown";
 	}
@@ -87,7 +87,7 @@ static void do_mode_cycle(void)
 	k_sleep(K_MSEC(300));
 
 	uint8_t val = (uint8_t)next;
-	int ret = settings_save_one("app/app_wifi_mode", &val, sizeof(val));
+	int ret = settings_save_one("app/zego_wifi_mode", &val, sizeof(val));
 
 	if (ret) {
 		LOG_ERR("settings_save_one failed (%d) — mode not saved", ret);

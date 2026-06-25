@@ -12,7 +12,7 @@
  *
  * Peer address resolution (mode-branched):
  *   STA:        headset discovers gateway via mDNS (existing socket_utils path)
- *   P2P_CLIENT: dhcp_bound hook sets fixed GO IP 192.168.7.1 directly
+ *   P2P_GC: dhcp_bound hook sets fixed GO IP 192.168.7.1 directly
  *   P2P_GO:     gateway binds INADDR_ANY; headset's AUDIO_START_CMD triggers encode
  */
 
@@ -56,10 +56,10 @@ void zego_on_net_event_wifi_connect(enum zego_wifi_mode mode)
 /**
  * Fired when:
  *   STA:         DHCP lease assigned (ip_addr = assigned IP)
- *   P2P_CLIENT:  Static IP 192.168.7.2 ready (ip_addr = "192.168.7.2")
+ *   P2P_GC:      Static IP 192.168.7.2 ready (ip_addr = "192.168.7.2")
  *   P2P_GO:      First AP client joined (ip_addr = "192.168.7.1")
  *
- * For P2P_CLIENT: sets the fixed GO IP as socket target so the headset
+ * For P2P_GC: sets the fixed GO IP as socket target so the headset
  * can send AUDIO_START_CMD to the gateway and start the audio loop.
  * For other modes: audio starts via the AUDIO_START_CMD round-trip (server
  * waits for headset's command; headset triggers via socket_target_ready_handler).
@@ -74,15 +74,15 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 	socket_utils_signal_dhcp_bound();
 
-	if (mode == ZEGO_WIFI_MODE_P2P_CLIENT) {
+	if (mode == ZEGO_WIFI_MODE_P2P_GC) {
 		/* P2P: no mDNS on the P2P link — use fixed GO IP directly. */
 		struct in_addr go_addr;
 
 		if (zsock_inet_pton(AF_INET, "192.168.7.1", &go_addr) == 1) {
 			socket_utils_set_target_ipv4(&go_addr);
-			LOG_INF("P2P_CLIENT: GO target set to 192.168.7.1");
+			LOG_INF("P2P_GC: GO target set to 192.168.7.1");
 		} else {
-			LOG_ERR("P2P_CLIENT: failed to parse GO IP");
+			LOG_ERR("P2P_GC: failed to parse GO IP");
 		}
 		/* socket_utils_set_target_ipv4 triggers socket_target_ready_handler
 		 * → send_audio_command(AUDIO_START_CMD) → gateway starts encoding. */

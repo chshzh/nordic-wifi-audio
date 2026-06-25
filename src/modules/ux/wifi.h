@@ -19,7 +19,7 @@ enum zego_wifi_mode {
 	ZEGO_WIFI_MODE_STA        = 0,
 	ZEGO_WIFI_MODE_SOFTAP     = 1,
 	ZEGO_WIFI_MODE_P2P_GO     = 2,
-	ZEGO_WIFI_MODE_P2P_CLIENT = 3,
+	ZEGO_WIFI_MODE_P2P_GC     = 3,
 };
 
 struct wifi_mode_msg {

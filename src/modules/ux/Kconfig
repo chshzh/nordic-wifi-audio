@@ -10,7 +10,7 @@ config APP_UX_MODULE
 
 	  Button 0 gestures:
 	    Single click  — print current Wi-Fi mode to UART log
-	    Long press    — cycle Wi-Fi mode (STA → P2P_GO → P2P_CLIENT → STA),
+	    Long press    — cycle Wi-Fi mode (STA → P2P_GO → P2P_GC → STA),
 	                    save to NVS, reboot
 	                    Note: SoftAP not included (P2P_GO replaces it)
 
