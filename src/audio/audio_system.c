@@ -17,7 +17,6 @@
 #include <contin_array.h>
 #include <data_fifo.h>
 #include <pcm_stream_channel_modifier.h>
-#include <tone.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
@@ -212,6 +211,33 @@ void audio_system_encoder_stop(void)
 	k_poll_signal_reset(&encoder_sig);
 }
 
+/* Local square-wave generator — replaces nrf/lib/tone (tone_gen) so the build
+ * does not pull in CMSIS-DSP just for a test tone. Fills one period of a 16-bit
+ * square wave and returns its size in bytes, matching tone_gen()'s contract. */
+static int square_tone_gen(int16_t *tone, size_t *tone_size, uint16_t tone_freq_hz,
+			   uint32_t smpl_freq_hz, float amplitude)
+{
+	if (tone == NULL || tone_size == NULL) {
+		return -ENXIO;
+	}
+	if (!smpl_freq_hz || tone_freq_hz < 100 || tone_freq_hz > 10000) {
+		return -EINVAL;
+	}
+	if (amplitude > 1 || amplitude <= 0) {
+		return -EPERM;
+	}
+
+	uint32_t samples_per_period = smpl_freq_hz / tone_freq_hz;
+	int16_t high = (int16_t)(amplitude * INT16_MAX);
+
+	for (uint32_t i = 0; i < samples_per_period; i++) {
+		tone[i] = (i < samples_per_period / 2) ? high : (int16_t)-high;
+	}
+
+	*tone_size = (size_t)samples_per_period * sizeof(int16_t);
+	return 0;
+}
+
 int audio_system_encode_test_tone_set(uint32_t freq)
 {
 	int ret;
@@ -222,8 +248,8 @@ int audio_system_encode_test_tone_set(uint32_t freq)
 	}
 
 	if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
-		ret = tone_gen(test_tone_buf, &test_tone_size, freq, CONFIG_AUDIO_SAMPLE_RATE_HZ,
-			       1);
+		ret = square_tone_gen(test_tone_buf, &test_tone_size, freq,
+				      CONFIG_AUDIO_SAMPLE_RATE_HZ, 1);
 		ERR_CHK(ret);
 	} else {
 		LOG_ERR("Test tone is not enabled");

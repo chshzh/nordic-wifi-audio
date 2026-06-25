@@ -151,12 +151,12 @@ endchoice
 
 config AUDIO_TEST_TONE
 	bool "Test tone instead of doing user defined action"
-	select TONE
 	default y
 	help
 	  Use button 4 to set a test tone
 	  instead of doing a user defined action.
-	  The test tone is generated on the device itself.
+	  The test tone is a locally generated square wave (no nrf/lib/tone,
+	  so CMSIS-DSP is not pulled in).
 
 config AUDIO_MUTE
 	bool "Mute instead of doing user defined action"
