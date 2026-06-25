@@ -1,7 +1,7 @@
 # Nordic Wi-Fi Audio
 
-[![Build](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/build.yml/badge.svg)](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/build.yml)
-[![Latest Release](https://img.shields.io/github/v/release/chshzh/nordic-wifi-audio?label=Release&color=skyblue)](https://github.com/chshzh/nordic-wifi-audio/releases/latest)
+[![Validation](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/validation.yml/badge.svg)](https://github.com/chshzh/nordic-wifi-audio/actions/workflows/validation.yml)
+[![Latest Release](https://img.shields.io/github/v/release/chshzh/nordic-wifi-audio?label=Latest%20Release&color=skyblue)](https://github.com/chshzh/nordic-wifi-audio/releases/latest)
 
 
 ## Project Overview
