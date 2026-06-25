@@ -24,19 +24,32 @@ manifest:
     # Common app modules and libraries
     - name: zego
       path: zego
-      revision: main
+      revision: v3.3.0.2
       remote: chshzh
 
-    # Add more sibling projects as needed:
-    - name: nordic-wifi-webdash
-      path: nordic-wifi-webdash
-      revision: main
-      remote: chshzh
+    # # Add more sibling projects as needed:
+    # - name: nordic-wifi-webdash
+    #   path: nordic-wifi-webdash
+    #   revision: main
+    #   remote: chshzh
 
-    - name: nordic-wifi-memfault
-      path: nordic-wifi-memfault
+    # - name: nordic-wifi-memfault
+    #   path: nordic-wifi-memfault
+    #   revision: main
+    #   remote: chshzh
+
+    - name: zview
+      url: https://github.com/chshzh/zview
       revision: main
-      remote: chshzh
+      path: modules/tools/zview
+      west-commands: scripts/west-commands.yml
+
+    # Opus codec source (replaces the former lib/opus git submodule).
+    # Pulled to modules/lib/opus alongside the other NCS modules; pinned to v1.5.2.
+    - name: opus
+      url: https://github.com/xiph/opus
+      revision: v1.5.2
+      path: modules/lib/opus
 
   self:
     path: nordic-wifi-audio
