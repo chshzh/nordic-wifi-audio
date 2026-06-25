@@ -13,8 +13,11 @@
 
 /* Override default MCUboot partition table with a single-image (no bootloader)
  * layout that matches the legacy Partition Manager layout:
- *   slot0_partition : 0x000000 - 0x0fbfff  (1008 KB, app image)
- *   storage_partition: 0x0fc000 - 0x0fffff  (16 KB, NVS/settings)
+ *   slot0_partition : 0x000000 - 0x0fdfff  (1016 KB, app image)
+ *   storage_partition: 0x0fe000 - 0x0fffff  (8 KB = 2 ZMS sectors, NVS/settings)
+ * storage was shrunk 16 KB -> 8 KB to give the app +8 KB so the P2P image
+ * still fits with the Wi-Fi shell enabled. 8 KB (2 x 4 KB sectors) is the ZMS
+ * minimum; it holds the Wi-Fi mode byte + a few stored credentials.
  */
 &flash0 {
 	/delete-node/ partitions;
@@ -26,12 +29,12 @@
 
 		slot0_partition: partition@0 {
 			label = "image-0";
-			reg = <0x0 0xfc000>;
+			reg = <0x0 0xfe000>;
 		};
 
-		storage_partition: partition@fc000 {
+		storage_partition: partition@fe000 {
 			label = "storage";
-			reg = <0xfc000 0x4000>;
+			reg = <0xfe000 0x2000>;
 		};
 	};
 };
