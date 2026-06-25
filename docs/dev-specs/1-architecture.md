@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-22-15-18 |
-| PRD Version | 2026-06-22-15-18 |
+| Version | 2026-06-25-13-35 |
+| PRD Version | 2026-06-25-13-30 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: dual-mode boot/dispatch; SD card + src/debug removed from module map; picolibc + NET_MAX_CONN/CONTEXTS=8 in memory budget; P2P Client→P2P_GC |
 | 2026-06-23-14-48 | Renamed from architecture.md; Flash Partition Layout moved to 2-dts-partition.md; Memory Budget replaced by reference to 3-memopt.md; Target Board(s) updated to P1 |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: zego brick architecture, P2P default boot sequence, module map revised, memory budget updated |
 | 2026-05-27-23-14 | Initial architecture derived from code (Mode C Reverse) |
@@ -29,8 +30,14 @@ state broadcasts use Zbus. Network lifecycle is handled entirely by the zego net
 brick; the app reacts via weak-hook overrides.
 
 The codebase compiles two separate application entry points under one CMakeLists:
-- `wifi_audio_gateway/` — UDP server, audio source (I2S / USB / SD card)
+- `wifi_audio_gateway/` — UDP server, audio source (I2S / USB; SD card present but disabled by default)
 - `wifi_audio_headset/` — UDP client, audio sink (I2S / USB hardware codec)
+
+Each entry point builds as a **single dual-mode firmware**: with the default
+`-Dnordic-wifi-audio_SNIPPET=wifi-p2p` snippet, both P2P and STA support are compiled in,
+and the active mode is NVS-persisted and runtime-switchable (no separate STA-only vs
+P2P-only image). Per-role mode visibility is gated by `CONFIG_ZEGO_WIFI_MODE_*_ENABLED`
+overlays (gateway exposes STA + P2P_GO; headset exposes STA + P2P_GC).
 
 Board-specific hardware is gated by Kconfig (`CONFIG_SOC_SERIES_NRF53`,
 `CONFIG_NRFX_I2S`, `CONFIG_BOARD_NRF5340_AUDIO_DK_*`) so the same `src/` tree
@@ -63,8 +70,8 @@ nordic-wifi-audio/
 │   │   ├── audio_usb.c/h           — USB audio class (headset composite)
 │   │   ├── audio_sync_timer.c/h    — RTC-based audio sync timer (nRF53 only)
 │   │   ├── hw_codec.c/h            — CS47L63 HW audio codec (nRF5340 Audio DK)
-│   │   ├── sd_card.c/h             — SD card FAT access
-│   │   └── sd_card_playback.c/h    — WAV playback thread from SD
+│   │   ├── sd_card.c/h             — SD card FAT access (present; disabled by default)
+│   │   └── sd_card_playback.c/h    — WAV playback thread from SD (present; disabled by default)
 │   ├── net/
 │   │   └── socket_utils.c/h        — UDP socket (server/client), TX/RX thread, peer resolution
 │   ├── drivers/
@@ -84,6 +91,13 @@ nordic-wifi-audio/
     ├── network/    — Wi-Fi lifecycle, WPA supplicant, weak-hook API
     └── memonitor/  — heap/stack watermark sampler, MEMONITOR_CHAN
 ```
+
+> **SD card disabled by default:** `sd_card.c/h` and `sd_card_playback.c/h` are still in
+> the tree but are no longer built — `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE` was removed from
+> `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`. Re-enable the Kconfig to build them back in.
+>
+> **`src/debug/` removed:** the former `src/debug/` directory (heaps_monitor) was deleted;
+> heap/stack watermark sampling is now provided by the zego/memonitor brick.
 
 ---
 
@@ -135,7 +149,6 @@ See `src/zbus_common.h` for legacy channel structs. See `zego/bricks/*/include/`
 | `socket_utils_thread` | `CONFIG_SOCKET_STACK_SIZE` | app | UDP socket bind/recv/send loop |
 | `volume_msg_sub_thread` | `CONFIG_VOLUME_MSG_SUB_STACK_SIZE` | app | Blocks on `volume_chan`, calls hw_codec |
 | `cs47l63_thread` | `CONFIG_CS47L63_STACK_SIZE` | high | SPI codec comms (nRF5340 Audio DK only) |
-| `sd_card_playback_thread` | `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE` | app | SD WAV playback (optional) |
 
 Zego brick threads (internal, not app-owned):
 - zego/network: one thread for WPA supplicant sequencing and P2P reconnect
@@ -151,15 +164,18 @@ Zego brick threads (internal, not app-owned):
 ```
 1. SYS_INIT (PRE_KERNEL_1): Zephyr kernel, drivers, net stack
 2. SYS_INIT (PRE_KERNEL_2): nRF70 Wi-Fi driver
-3. SYS_INIT (POST_KERNEL, ~41): zego/wifi brick
-   — reads NVS for saved mode
-   — publishes WIFI_MODE_CHAN (mode = P2P_GO or P2P_CLIENT by default)
-   — prints app banner to UART
+3. SYS_INIT (POST_KERNEL, ~41): zego/wifi brick — Wi-Fi mode selector
+   — reads NVS key `app/zego_wifi_mode` for the saved mode
+   — publishes WIFI_MODE_CHAN (default P2P_GO on gateway, P2P_GC on headset per role; or STA)
+   — prints the app/mode banner to UART
 4. SYS_INIT (POST_KERNEL, ~42): zego/network brick
    — reads WIFI_MODE_CHAN
    — registers all net_mgmt callbacks
    — waits for WPA supplicant ready (30 s timeout, bounded)
-   — dispatches to mode startup: P2P_GO auto-start or P2P_CLIENT peer scan
+   — dispatches to the mode's startup:
+     • P2P_GO — autonomous GO group + on-link DHCP server (clients get 192.168.7.x; GO is 192.168.7.1)
+     • P2P_GC — auto-join the GO by its exact MAC, then DHCP (GC settles at 192.168.7.2)
+     • STA    — connect to the configured AP, then DHCP + mDNS (gateway advertises, headset discovers)
 5. SYS_INIT (POST_KERNEL, ~45): zego/button brick — GPIO configured
    SYS_INIT (POST_KERNEL, ~45): zego/led brick — LED hardware ready
    SYS_INIT (APPLICATION): zego/memonitor — starts sampling
@@ -170,7 +186,9 @@ Zego brick threads (internal, not app-owned):
    socket_utils_thread waits in zego hook (no k_sem_take on global sems)
 9. main() — zbus_subscribers_create() — button, le_audio subs
 10. → Network events arrive via zego weak hooks in net_event_app.c:
-    zego_on_net_event_dhcp_bound (STA) / zego_on_net_event_wifi_ap_sta_connected (P2P_GO):
+    zego_on_net_event_dhcp_bound (STA + P2P_GC; P2P_GC sets the fixed GO IP 192.168.7.1
+    directly, STA discovers the gateway via mDNS) and
+    zego_on_net_event_wifi_ap_enabled / zego_on_net_event_wifi_ap_sta_connected (P2P_GO):
       → audio_system_encoder_start()
       → publish APP_WIFI_STATE_CHAN (CONNECTED)
       → signal socket ready
@@ -187,6 +205,12 @@ The audio starts from a hook, not from a sequential boot step.
 ## Memory Budget
 
 See [3-memopt.md](3-memopt.md) for the current memory budget, stack watermarks, heap sizing, and headroom tracking.
+
+Key footprint decisions for the dual-mode build (nRF5340 Audio DK + nRF7002EK):
+
+- **C library is picolibc** (`CONFIG_PICOLIBC=y`, `CONFIG_NEWLIB_LIBC=n`) — saves ~15 KB flash / ~14 KB RAM vs newlib, which is what makes the dual-mode image fit.
+- **Socket pools raised to 8** (`CONFIG_NET_MAX_CONN=8`, `CONFIG_NET_MAX_CONTEXTS=8`, up from 4/6) so the P2P_GO DHCP server can bind its socket alongside the mDNS responder, hostap, and app sockets without exhausting the pool.
+- **Dual-mode flash on the nRF5340 Audio DK is ≈ 99 % of the 1016 KB app partition** — tight but fitting; do not add the Opus overlay on top of the P2P snippet (mutually exclusive).
 
 Pre-refactor flash baselines (NCS v3.3.0, with Opus overlay):
 
@@ -213,7 +237,7 @@ This project uses single-image (no MCUboot/OTA) DTS fixed-partitions only. `SB_C
 ## Build Configurations (Build Matrix)
 |---|---|---|---|---|---|---|
 | 1 | gateway | nRF5340 Audio DK + EK | P2P_GO | PCM | P0 default | `overlay-audio-gateway.conf` |
-| 2 | headset | nRF5340 Audio DK + EK | P2P_CLIENT | PCM | P0 default | `overlay-audio-headset.conf` |
+| 2 | headset | nRF5340 Audio DK + EK | P2P_GC | PCM | P0 default | `overlay-audio-headset.conf` |
 | 3 | gateway | nRF5340 Audio DK + EK | STA | opus | P0 | `overlay-audio-gateway.conf;overlay-opus.conf` |
 | 4 | headset | nRF5340 Audio DK + EK | STA | opus | P0 | `overlay-audio-headset.conf;overlay-opus.conf` |
 | 5 | gateway | nRF5340 Audio DK + EK | STA | PCM | P1 | `overlay-audio-gateway.conf` |
@@ -227,9 +251,10 @@ This project uses single-image (no MCUboot/OTA) DTS fixed-partitions only. `SB_C
 
 | Marker string | Expected at |
 |---|---|
-| `[WiFi] Mode: P2P_GO` / `P2P_CLIENT` | zego/wifi brick banner — mode selected |
+| `Current Wi-Fi Mode: STA` / `P2P_GO` / `P2P_GC` | zego/wifi brick banner — active mode selected |
+| `zego_wifi_mode [...]` | zego/wifi brick banner — switch hint; printed only when >1 mode is enabled for the role |
 | `[Network] WPA supplicant ready` | zego/network brick internal |
-| `[Network] P2P GO started` / `P2P client connected` | zego/network — P2P link up |
+| `[Network] P2P GO started` / `P2P_GC connected` | zego/network — P2P link up |
 | `[net_event_app] Connected — starting audio` | `zego_on_net_event_*` hook fired |
 | `Audio stream started` | `audio_system_encoder_start()` called |
 | `Drft comp state: CALIB` | Drift compensation entering calibration |

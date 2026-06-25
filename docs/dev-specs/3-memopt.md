@@ -5,14 +5,15 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-23-14-48 |
+| Version | 2026-06-25-13-35 |
+| PRD Version | 2026-06-25-13-30 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Method | Build output flash summary; ZView watermark measurements pending (Phase 4.2) |
 | Status | Draft |
 
 > `Version` = this doc's own latest edit time (`date +%Y-%m-%d-%H-%M`); bump on every edit.
-> No `PRD Version` field — this doc tracks code metrics, not product requirements.
+> `PRD Version` = the PRD revision this report's targets and budgets were reconciled against.
 
 ---
 
@@ -20,6 +21,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: picolibc (−~15 KB flash/−~14 KB RAM); removed CMSIS-DSP/LC3 tone path (square-wave test tone), SD card + power-measurement modules, src/debug; memonitor ZView-only; NET_MAX_CONN/NET_MAX_CONTEXTS=8 for dual-mode socket budget; dual-mode flash figures |
 | 2026-06-23-14-48 | Initial report: pre-refactor flash baselines from 1-architecture.md; stack and heap measurements marked TBD pending Phase 4.2 ZView pass |
 
 ---
@@ -50,18 +52,20 @@ to absorb network burst spikes.
 
 ## Flash & RAM Budget
 
-Pre-refactor baselines measured with Opus overlay (worst-case flash):
+Current figures (nRF5340 Audio DK, **picolibc** C library, slot0 = 1016 KB):
 
-| Config | Board | Flash used | Flash avail | Flash headroom |
+| Config | Board | Flash used | Flash avail | Flash util |
 |---|---|---|---|---|
-| gateway + opus | nRF5340 Audio DK | 776 KB | 1024 KB | 24 % |
-| headset + opus | nRF5340 Audio DK | 802 KB | 1024 KB | 22 % |
-| gateway + opus | nRF7002DK | 748 KB | 1024 KB | 27 % |
-| gateway + opus | nRF54LM20DK | 722 KB | 1940 KB | 63 % |
+| dual-mode gateway (P2P + STA + mDNS, wifi-p2p snippet) | nRF5340 Audio DK | ≈ 1006 KB | 1016 KB | ≈ 99.07 % |
+| dual-mode headset (P2P + STA + mDNS, wifi-p2p snippet) | nRF5340 Audio DK | ≈ 1001 KB | 1016 KB | ≈ 98.57 % |
+| STA-only (no wifi-p2p snippet) | nRF5340 Audio DK | ≈ 640 KB | 1016 KB | ≈ 63 % |
 
-> ⚠️ These are **pre-refactor** baselines from NCS v3.2 era. Post-refactor (zego brick architecture,
-> NCS v3.3.0) measurements are pending Phase 4.2 validation.
-> P2P + PCM (default build, no Opus) is expected to be smaller than the Opus baseline.
+> The single dual-mode firmware (P2P + STA + mDNS) only fits in the 1016 KB slot0 after switching the
+> C library to **picolibc** (`CONFIG_PICOLIBC=y`, `CONFIG_MINIMAL_LIBC=n`, `CONFIG_NEWLIB_LIBC=n` in
+> `prj.conf`, overriding the `NEWLIB` choice from `Kconfig.defaults`). picolibc saves ~15 KB flash and
+> ~14 KB RAM vs newlib-nano. Flash was further reclaimed by dropping the CMSIS-DSP / LC3 `tone` test-tone
+> path, the SD card and power-measurement modules, and `src/debug/` (see Summary of Changes Applied).
+> At ≈ 99 % the dual-mode build exceeds the NFR-002 ≤ 85 % headroom target — flagged in Open Issues.
 
 RAM budget measurements: **TBD — pending Phase 4.2 ZView pass.**
 
@@ -81,7 +85,7 @@ RAM budget measurements: **TBD — pending Phase 4.2 ZView pass.**
 | `button_msg_sub_thread` | `CONFIG_BUTTON_MSG_SUB_STACK_SIZE` | — | — | — | ÷0.8 | — | — | — |
 | `le_audio_msg_sub_thread` | `CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE` | — | — | — | ÷0.8 | — | — | — |
 | `volume_msg_sub_thread` | `CONFIG_VOLUME_MSG_SUB_STACK_SIZE` | — | — | — | ÷0.8 | — | — | — |
-| `sd_card_playback_thread` | `CONFIG_SD_CARD_PLAYBACK_STACK_SIZE` | — | — | — | ÷0.8 | — | — | — |
+| ~~`sd_card_playback_thread`~~ | ~~`CONFIG_SD_CARD_PLAYBACK_STACK_SIZE`~~ | n/a | n/a | n/a | — | — | — | — (no longer built — SD card module removed) |
 | `sysworkq` | `SYSTEM_WORKQUEUE_STACK_SIZE` | — | — | — | ÷0.8 | — | — | — |
 | `rx_q` | `NET_RX_STACK_SIZE` | — | — | — | kept | 2048 | 2048 | 0 |
 | `tx_q` | `NET_TX_STACK_SIZE` | — | — | — | kept | 2048 | 2048 | 0 |
@@ -112,11 +116,20 @@ RAM budget measurements: **TBD — pending Phase 4.2 ZView pass.**
 
 ## Summary of Changes Applied
 
-No stack or heap optimizations applied yet. Baseline measurements pending.
+Footprint-reduction changes applied to make the single dual-mode firmware fit slot0 (see Flash & RAM
+Budget). Thread-stack and heap watermark tuning is still pending Phase 4.2 measurements.
 
-| Kconfig | Old | New | Δ (B) | Reason |
+| Kconfig | Old | New | Δ | Reason |
 |---|---|---|---|---|
-| `CONFIG_LOG_BUFFER_SIZE` | 1024 | 4096 | +3072 | Boot banner silently lost on nRF5340 Audio DK (overflow); see board conf |
+| `CONFIG_LOG_BUFFER_SIZE` | 1024 | 4096 | +3072 B | Boot banner silently lost on nRF5340 Audio DK (overflow); see board conf |
+| `CONFIG_PICOLIBC` / `CONFIG_NEWLIB_LIBC` / `CONFIG_MINIMAL_LIBC` | newlib-nano (`Kconfig.defaults` `NEWLIB` choice) | `PICOLIBC=y`, `NEWLIB_LIBC=n`, `MINIMAL_LIBC=n` (in `prj.conf`) | −~15 KB flash / −~14 KB RAM | Switch C library to picolibc; what made the dual-mode firmware fit |
+| `CONFIG_CMSIS_DSP`, `CMSIS_DSP_FASTMATH`, `FP16`, `FLOAT16` | enabled (pulled in by `nrf/lib/tone`) | dropped | flash reclaimed | Test-tone path replaced: LC3/`nrf/lib/tone` `tone_gen()` (used `arm_sin_f32`) → local static `square_tone_gen()`. The tone lib was the only consumer; `CONFIG_AUDIO_TEST_TONE` no longer `select TONE` |
+| `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE` | enabled | removed (`boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`) | flash reclaimed | FAT/SDHC stack no longer linked; `sd_card_playback_thread` no longer built |
+| `CONFIG_NRF5340_AUDIO_POWER_MEASUREMENT` | enabled | removed (`boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`) | flash reclaimed | Power-measurement module no longer linked |
+| `CONFIG_HEAPS_MONITOR` (`src/debug/` heaps_monitor) | enabled | removed (`src/debug/` deleted) | flash/RAM reclaimed | Replaced by ZView-based memonitor |
+| `CONFIG_ZEGO_MEMONITOR` / `CONFIG_ZEGO_MEMONITOR_ZVIEW` | firmware periodic sampler | `ZEGO_MEMONITOR=y`, `ZEGO_MEMONITOR_ZVIEW=y` (ZView-only; sampler `INTERVAL_MS` line removed) | RAM/CPU reclaimed | Watermarks read live over SWD via ZView instead of an on-device sampling thread |
+| `CONFIG_NET_MAX_CONN` | 4 | 8 | +4 conns | Dual-mode pool exhaustion: mDNS + hostap control + app socket left no slot for the P2P_GO DHCP server's port-67 bind → failed with `-ENOENT` (`prj.conf`) |
+| `CONFIG_NET_MAX_CONTEXTS` | 6 | 8 | +2 contexts | Each bound socket consumes one conn + one context, so raised together with `NET_MAX_CONN` (`prj.conf`) |
 
 ---
 
@@ -126,4 +139,4 @@ No stack or heap optimizations applied yet. Baseline measurements pending.
 |---|---|---|---|
 | 1 | Measure all thread stack watermarks via ZView after P2P+PCM boot (steady-state with audio streaming) | — | Phase 4.2 |
 | 2 | Measure WPA supplicant and nRF Wi-Fi heap peaks for P2P vs STA | — | Phase 4.2 |
-| 3 | Confirm post-refactor flash totals for default (PCM+P2P) and Opus overlay builds | — | Phase 4.2 |
+| 3 | Dual-mode firmware sits at ≈ 99 % of slot0, exceeding the NFR-002 ≤ 85 % flash headroom target; identify further flash savings or revisit the partition/target | — | Phase 4.2 |

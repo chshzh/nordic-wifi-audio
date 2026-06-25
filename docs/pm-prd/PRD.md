@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Product Name | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-23-14-27 |
+| Product Name | Nordic Wi-Fi Audio |
+| Version | 2026-06-25-13-30 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
-| Status | In Review |
+| Status | Approved |
 
 > **Status values:** `Draft` → `In Review` → `Approved` → `Implemented` → `Archived`
 
@@ -18,6 +18,8 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-25-13-30 | Reverse the "separate binaries" decision: single dual-mode firmware (default build, with wifi-p2p snippet) now supports both P2P and STA-with-mDNS, runtime-switchable. Enabled by switching to picolibc (−~15 KB flash/−~14 KB RAM) and replacing the LC3/CMSIS-DSP test-tone with a local square-wave. Renamed P2P Client → P2P_GC (Group Client) throughout. Per-role mode visibility (Gateway: STA+P2P_GO, Headset: STA+P2P_GC). Verified on HW: P2P auto-connect+stream and STA mDNS auto-discovery+stream both working. |
+| 2026-06-24-15-04 | Separate P2P and STA into distinct firmware binaries; P2P built with -Dnordic-wifi-audio_SNIPPET=wifi-p2p, STA built without; mDNS DNS-SD auto-discovery implemented for STA mode (headset resolves gateway IP via PTR query); src/debug removed; SD card module disabled; memonitor simplified to ZView-only; COMPILER_OPT moved to overlay-opus.conf |
 | 2026-06-23-14-27 | Promote nRF7002DK and nRF54LM20DK from deferred to P1 (gateway only, build verified); role-specific boot banner (gateway/headset names); log buffer increased on nRF5340 Audio DK for reliable boot logging; README build section updated with multi-board commands; full structural reformat to PRD template |
 | 2026-06-22-15-18 | Introduce P2P autoconnect as default mode; adopt zego brick library; scope Opus to STA-only overlay; clarify board scope; remove SoftAP as selectable mode; migrate Document Information to template format |
 | 2026-05-27-23-14 | Initial PRD derived from existing code (Mode A reverse scan) |
@@ -28,7 +30,7 @@
 
 ### 1.1 Product Overview
 
-Nordic Wi-Fi Audio Demo (`nordic-wifi-audio`) is a runnable reference application demonstrating low-latency audio transport over Wi-Fi using the nRF70 Wi-Fi chip family and the nRF Connect SDK. The default experience is zero-infrastructure: power on a Gateway board and a Headset board and audio flows automatically via Wi-Fi Direct (P2P). An optional STA mode enables the same demo over an existing Wi-Fi network with Opus compression.
+Nordic Wi-Fi Audio Demo (`nordic-wifi-audio`) is a runnable reference application demonstrating low-latency audio transport over Wi-Fi using the nRF70 Wi-Fi chip family and the nRF Connect SDK. The default experience is zero-infrastructure: power on a Gateway board and a Headset board and audio flows automatically via Wi-Fi Direct (P2P). An optional STA mode enables the same demo over an existing Wi-Fi network. Audio is transported as raw PCM by default; an optional Opus codec overlay (`overlay-opus.conf`) is available in STA mode for reduced bandwidth at configurable bitrate (6–320 kbps).
 
 ### 1.2 Problem Statement
 
@@ -45,23 +47,23 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 
 ### 1.4 Success Metrics
 
-| Metric | Target | How to measure |
-|---|---|---|
-| P2P audio stream ready | < 60 s from power-on of both boards | Time from boot to audible audio |
-| End-to-end audio latency | < 200 ms | Clap test with slow-motion camera or oscilloscope |
-| Glitch-free runtime | ≥ 60 s continuous under normal 2.4/5 GHz conditions | Manual listen test |
-| All P0 builds succeed | Zero compiler errors on nRF5340 Audio DK gateway + headset | `west build -p` on both targets |
-| P1 builds succeed | Zero compiler errors on nRF7002DK + nRF54LM20DK gateway | `west build -p` on both targets |
-| nRF5340 flash utilisation | ≤ 85% for all P0 configurations | Build output flash summary |
+| Metric | Target | How to measure | Verified by |
+|---|---|---|---|
+| All P0 builds succeed | Zero compiler errors on nRF5340 Audio DK gateway + headset | `west build -p` on both targets | **chsh-sk-ncs-4.1-verification** — build verification step |
+| P1 builds succeed | Zero compiler errors on nRF7002DK + nRF54LM20DK gateway | `west build -p` on both targets | **chsh-sk-ncs-4.1-verification** — build verification step |
+| P2P audio stream ready | < 60 s from power-on of both boards | Time from boot to audible audio | **chsh-sk-ncs-4.2-validation** — hardware runtime scenario |
+| End-to-end audio latency | < 200 ms | Clap test with slow-motion camera or oscilloscope | **chsh-sk-ncs-4.2-validation** — hardware runtime scenario |
+| Glitch-free runtime | ≥ 60 s continuous under normal 2.4/5 GHz conditions | Manual listen test | **chsh-sk-ncs-4.2-validation** — hardware runtime scenario |
 
 ### 1.5 Assumptions
 
 | # | Assumption | Risk if wrong |
 |---|---|---|
-| A1 | Wi-Fi Direct (P2P) is not blocked by the test environment | Medium — some enterprise environments restrict P2P; STA mode is the fallback |
-| A2 | nRF5340 Audio DK is the primary development and validation board for both gateway and headset roles | High — other boards support gateway role only |
-| A3 | Opus + P2P is permanently out of scope (nRF5340 ≤ 1 MB flash hard constraint) | Low — constraint is architectural |
-| A4 | User has NCS v3.3.0 installed | High — API differences in other versions may break the build |
+| A1 | nRF5340 Audio DK is the primary development and validation board for both gateway and headset roles | High — other boards support gateway role only |
+| A2 | User has NCS v3.3.0 installed | High — API differences in other versions may break the build |
+| A3 | Wi-Fi Direct (P2P) is not blocked by the test environment | Medium — some enterprise environments restrict P2P; STA mode is the fallback |
+| A4 | Opus + P2P is out of scope on nRF5340 (1 MB flash); Opus is an STA-only build option | Low — constraint is architectural |
+| A5 | P2P and STA-with-mDNS coexist in a single dual-mode firmware (default build) | Low — fits ~99% of 1 MB flash after switching to picolibc and removing the LC3/CMSIS-DSP test-tone path |
 
 ---
 
@@ -69,9 +71,10 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 
 ### 2.1 Wi-Fi Connectivity
 
-- **P2P mode (Wi-Fi Direct) — default:** Gateway creates a P2P Group Owner; Headset discovers and connects automatically by OUI prefix within 60 seconds. Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset). No router required.
-- **STA mode — optional overlay:** Both devices join an existing Wi-Fi network. Gateway advertises via mDNS (`audiogateway.local`); Headset auto-resolves hostname within 10 seconds.
-- Mode is stored in NVS and survives reboot. Long press on Button 0 cycles modes (STA → P2P_GO → P2P_CLIENT).
+- **Single dual-mode firmware (default build):** One image supports both Wi-Fi Direct P2P and infrastructure STA; the active mode is stored in NVS and switchable at runtime (shell command or Button 0 long-press). Built with `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`. A smaller STA-only image (no snippet) is available when P2P is not needed.
+- **P2P mode (Wi-Fi Direct, default on fresh flash):** Gateway is the Group Owner (P2P_GO); Headset is the Group Client (P2P_GC) and auto-connects by the GO's device MAC within 60 seconds. Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset), served by the GO's DHCP server. No router required.
+- **STA mode (infrastructure Wi-Fi):** Both devices join an existing Wi-Fi network. The Gateway advertises an audio service via mDNS DNS-SD; the Headset discovers the Gateway's DHCP-assigned IP automatically via a DNS-SD PTR→SRV→A query — no hardcoded address. Credentials stored in NVS.
+- **Per-role mode availability:** Gateway exposes STA + P2P_GO; Headset exposes STA + P2P_GC.
 
 ### 2.2 Communication & Protocols
 
@@ -82,30 +85,65 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 ### 2.3 Storage & Memory
 
 - NVS used for Wi-Fi mode selection persistence across reboots.
-- No Wi-Fi credential management (P2P = static link; STA credentials provided via `overlay-sta.conf` at build time).
+- STA Wi-Fi credentials entered at runtime via Zephyr shell (`wifi connect` / `wifi cred` commands provided by the zego Wi-Fi brick); credentials persist in NVS across reboots. No static credential baking at build time.
 
 ### 2.4 Buttons & LEDs
 
-| Hardware | nRF5340 Audio DK | nRF7002DK | nRF54LM20DK + nRF7002EB2 |
+| Hardware | nRF5340 Audio DK + nRF7002EK | nRF7002DK | nRF54LM20DK + nRF7002EB2 |
 |---|---|---|---|
-| Buttons | 4 (sw0–sw3) | 2 (Button 1–2) | 3+ |
-| LEDs | 4 | 2 | 4 |
+| Buttons | 5 (VOL-, VOL+, PLAY/PAUSE, BTN4, BTN5) | 2 (Button 1–2) | 3 (BUTTON0–2) |
+| LEDs | 9 (idx 0–8) | 2 | 4 |
 
-| Button | Behavior |
+### Buttons
+
+| Board | Button | Gesture | Action |
+|---|---|---|---|
+| nRF5340 Audio DK + nRF7002EK | VOL- (idx 0) | Single click | Volume Down  |
+| | VOL+ (idx 1) | Single click | Volume Up |
+| | PLAY/PAUSE (idx 2) | Single click | Play / Pause audio stream |
+| | BTN4 (idx 3) | Single click | Trigger test tone |
+| | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
+| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
+
+
+### LEDs
+
+LED 0 reflects the Wi-Fi / audio connection state. All other LEDs are available for application use.
+
+| Board | LED 0 (idx 0) | Other LEDs |
+|---|---|---|
+| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/audio state | RGB2 (idx 3–5) — role indicator (see below); LED1–3 (idx 6–8) — free |
+| nRF7002DK | LED1 — Wi-Fi / audio state | LED2 (idx 1) — free |
+| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / audio state | LED1–3 (idx 1–3) — free |
+
+nRF7002DK and nRF54LM20DK + nRF7002EB2 LED 0 state effects:
+
+| State | Effect |
 |---|---|
-| Button 0 short press | Print current Wi-Fi mode to UART |
-| Button 0 long press (≥ 3 s) | Cycle Wi-Fi mode (STA → P2P_GO → P2P_CLIENT), save to NVS, reboot |
-| Button 1 (headset, sw1) | Volume Up |
-| Button 2 (sw2) | Play / Pause audio stream |
-| Button 3 (sw3) | Test tone trigger |
-
-> **Note:** Volume Down is not available on nRF5340 Audio DK in this release; sw0 is reserved for Wi-Fi mode selection.
-
-| LED state | Effect |
-|---|---|
-| Boot / connecting | Rotate (cycling effect) |
+| Boot / connecting | ROTATE |
 | Audio link active | Solid ON |
-| Error / disconnected | Fast blink (100 ms) |
+| Error / disconnected | Fast BLINK (100 ms half-period) |
+
+nRF5340 Audio DK + nRF7002EK RGB1 state effects:
+
+| State | Effect |
+|---|---|
+| Boot / connecting | RGB1 ROTATE (all three channels) |
+| Audio link active | RGB1 Green — Solid ON |
+| Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
+
+nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
+
+| Role | RGB2 colour |
+|---|---|
+| Gateway | Blue |
+| Headset | Green |
 
 ### 2.5 Audio I/O
 
@@ -119,8 +157,6 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 ### 2.6 Developer & Debug Features
 
 - Boot banner includes role-specific product name (`nordic-wifi-audio-gateway` / `nordic-wifi-audio-headset`), firmware version, and MAC address.
-- Zephyr shell accessible over USB UART.
-- Wi-Fi mode readable at any time via Button 0 short press.
 
 ---
 
@@ -133,7 +169,7 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 | FR-001 | developer | stream encoded audio from a Gateway to a Headset over Wi-Fi | I can evaluate latency and quality of Wi-Fi audio on Nordic hardware | Audio frames transmitted with < 200 ms end-to-end latency; start/end byte framing ensures frame integrity; no audible glitching under normal 2.4/5 GHz for ≥ 60 s continuous | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
 | FR-002 | developer | evaluate audio quality with PCM (default) or Opus (overlay, STA only) | I can choose the right bitrate/complexity trade-off for my product | Default build uses raw PCM in P2P and STA modes; Opus enabled via `overlay-opus.conf` in STA mode only; Opus encodes at 6–320 kbps; P2P + Opus is explicitly out of scope (nRF5340 flash constraint) | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
 | FR-003 | user | have each device operate in a defined Gateway or Headset role | the demo setup is unambiguous | Gateway = UDP server, captures and encodes audio; Headset = UDP client, receives and plays; role selected at build time via `overlay-audio-gateway.conf` / `overlay-audio-headset.conf` | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
-| FR-004 | developer | have Gateway and Headset connect directly via Wi-Fi Direct (P2P) without a router | the demo works in any environment without infrastructure | Gateway starts as P2P Group Owner; Headset discovers by OUI prefix and connects within 60 s; static IP 192.168.7.1/7.2; P2P is the default mode on first boot | [network-module.md](../dev-specs/network-module.md), [mode-selector.md](../dev-specs/mode-selector.md) |
+| FR-004 | developer | have Gateway and Headset connect directly via Wi-Fi Direct (P2P) without a router | the demo works in any environment without infrastructure | Gateway starts as P2P Group Owner (P2P_GO); Headset (P2P_GC) auto-connects to the GO's exact device MAC and connects within 60 s; GO runs a DHCP server assigning static IP 192.168.7.1/7.2; P2P is the default mode on first boot | [network-module.md](../dev-specs/network-module.md), [mode-selector.md](../dev-specs/mode-selector.md) |
 | FR-009 | developer | use the onboard CS47L63 codec and 3.5 mm jack on nRF5340 Audio DK | the demo works with standard headphones | I2S PCM flows between nRF5340 and CS47L63; volume adjustable via codec registers; I2S path auto-disabled on boards without hardware codec | [board-init-module.md](../dev-specs/board-init-module.md) |
 | FR-010 | developer | build the same codebase for all supported hardware platforms | the demo can be demonstrated on different Nordic boards | P0: nRF5340 Audio DK gateway + headset (I2S audio); P1 gateway-only: nRF7002DK and nRF54LM20DK + nRF7002EB2 (build verified NCS v3.3.0); per-board DTS overlay and Kconfig; zero compiler errors from single `src/` tree | [board-init-module.md](../dev-specs/board-init-module.md) |
 

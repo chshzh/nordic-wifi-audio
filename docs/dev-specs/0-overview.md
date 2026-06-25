@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-23-14-48 |
-| PRD Version | 2026-06-23-14-27 |
+| Version | 2026-06-25-13-35 |
+| PRD Version | 2026-06-25-13-30 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: single dual-mode firmware (P2P + STA-mDNS) replaces separate-binaries framing; picolibc + square-wave-tone design decisions; FR-011 SD card now off-by-default |
 | 2026-06-23-14-48 | Renamed to 0-overview.md; architecture.md to 1-architecture.md; added 2-dts-partition.md and 3-memopt.md to Spec Index; added Purpose section; renumbered sections |
 | 2026-06-23-14-27 | Synced to PRD v2026-06-23-14-27: nRF7002DK + nRF54LM20DK promoted to P1; role-specific banner names (gateway/headset) in CMakeLists.txt; CONFIG_LOG_BUFFER_SIZE=4096 on nRF5340 Audio DK; README build section rewritten for multi-board |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: zego brick architecture, P2P default mode, module map revised, zbus channel table updated |
@@ -55,6 +56,12 @@ Wi-Fi lifecycle, mode persistence, button gestures, LED animations, and memory m
 The app supplies strong overrides of the network brick's weak hooks to start/stop the
 audio pipeline at the right moments.
 
+A single **dual-mode firmware** (the default build, with `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`)
+supports both Wi-Fi Direct P2P and infrastructure STA in one image. On fresh flash the Gateway
+boots as **P2P_GO** and the Headset as **P2P_GC**; either device can be switched to **STA**
+(with mDNS auto-discovery) at runtime — the active mode is persisted in NVS and applied on a
+cold reboot. A smaller STA-only image (no snippet) is available when P2P is not needed.
+
 Audio data flows directly: hook callback → `audio_system_encoder_start()` → encoder
 thread → `socket_utils_tx_data()`. Zbus carries mode/state messages between modules.
 
@@ -62,12 +69,14 @@ thread → `socket_utils_tx_data()`. Zbus carries mode/state messages between mo
 
 | # | Decision | Rationale |
 |---|---|---|
-| 1 | P2P_GO/P2P_CLIENT as the default mode | Zero-infrastructure; power on two boards, audio flows — no router, no credentials |
+| 1 | Dual-mode firmware: P2P_GO/P2P_GC default on fresh flash, STA-with-mDNS switchable at runtime | One image (default build, `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`) covers both transports; zero-infrastructure P2P out of the box, infrastructure STA when a router is available — mode persisted in NVS, no reflash to switch |
 | 2 | Weak-hook API (not semaphores) to start audio | zego network brick handles all WPA supplicant sequencing; app reacts to `dhcp_bound` / `ap_sta_connected` events |
 | 3 | Static IPs for P2P (192.168.7.1/7.2) | P2P mode has no DHCP server on the client; mDNS unreliable over P2P link |
 | 4 | Opus = STA-only overlay | P2P WPA supplicant heap + libopus working set exceed nRF5340 RAM |
 | 5 | zego bricks as read-only dependency | Consistent patterns across projects; brick gaps surface as separate decisions |
 | 6 | UDP transport (not TCP) | Lower latency; audio can tolerate lost frames but not head-of-line blocking |
+| 7 | picolibc as the C library (`CONFIG_PICOLIBC=y`, newlib off) | Saves ~15 KB flash / ~14 KB RAM vs newlib — the headroom that lets the P2P + STA dual-mode image fit in the nRF5340's 1 MB flash |
+| 8 | Local square-wave generator replaces the LC3/CMSIS-DSP `tone_gen` test-tone path | A small in-tree `square_tone_gen()` (`src/audio/audio_system.c`) matches the old `tone_gen()` contract without pulling in CMSIS-DSP, freeing flash for dual-mode |
 
 ---
 
@@ -85,7 +94,7 @@ thread → `socket_utils_tx_data()`. Zbus carries mode/state messages between mo
 | FR-008 | `board-init-module.md`, `audio-pipeline.md` | USB audio class |
 | FR-009 | `board-init-module.md`, `audio-pipeline.md` | CS47L63, I2S |
 | FR-010 | `board-init-module.md`, `1-architecture.md` | Multi-board DTS overlays, build matrix |
-| FR-011 | `board-init-module.md` | SD card playback |
+| FR-011 | `board-init-module.md` | SD card playback (off by default — `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE` removed from the board conf; source retained but unbuilt, optional via `_release.conf`) |
 | FR-012 | `board-init-module.md` | LINE IN overlay |
 | NFR-001 | `1-architecture.md`, `2-dts-partition.md` | CMakeLists, EXTRA_ZEPHYR_MODULES, flash partitions |
 | NFR-002 | `3-memopt.md`, `diagnostics-module.md` | Memory budget, stack watermarks, memonitor |

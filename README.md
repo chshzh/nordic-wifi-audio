@@ -20,13 +20,13 @@
 
 ### Features
 
-- **Wi-Fi P2P audio link (default)** — device boots into Wi-Fi Direct P2P_GO / P2P_CLIENT mode; no router or credentials needed on first boot.
+- **Wi-Fi P2P audio link (default)** — device boots into Wi-Fi Direct P2P_GO (Gateway) / P2P_GC (Headset) mode; no router or credentials needed on first boot.
 - **STA mode support** — join an existing Wi-Fi network for integration into home or studio setups.
 - **Dual device roles** — Gateway (audio source, UDP server) and Headset (audio sink, UDP client); role selected at build time.
-- **Raw PCM streaming** — low-latency uncompressed 16-bit PCM over UDP with no codec overhead in the default build.
+- **Raw PCM streaming (default)** — low-latency uncompressed 16-bit PCM over UDP with no codec overhead in the default build.
 - **Opus codec option** — add `overlay-opus.conf` for compressed streaming with configurable bitrate (STA mode only; mutually exclusive with P2P on nRF5340).
-- **USB audio source** — Gateway appears as a USB sound card on the host PC; set it as the output device and any audio plays wirelessly.
-- **LINE IN source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
+- **USB audio source (default)** — Gateway appears as a USB sound card on the host PC; set it as the output device and any audio plays wirelessly.
+- **Analog audio source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
 - **Runtime mode switching** — Button 0 long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
 - **Visual status feedback** — LED rotates while connecting, solid ON during active audio link, fast blink on error.
 - **Startup banner** — prints firmware version, board, role, Wi-Fi mode, and connection instructions at every boot.
@@ -57,7 +57,7 @@ Flash using **nRF Connect for Desktop → Programmer** (Erase & Write), or via C
 nrfutil device program --firmware nordic-wifi-audio-<role>-<board>-<version>.hex --verify
 ```
 
-> **Two-device setup:** Flash one nRF5340 Audio DK as Gateway and a second as Headset. Both boot into P2P mode — Gateway starts as P2P_GO and Headset as P2P_CLIENT. They pair automatically using the static P2P link (`192.168.7.1` Gateway / `192.168.7.2` Headset).
+> **Two-device setup:** Flash one nRF5340 Audio DK as Gateway and a second as Headset. Both boot into P2P mode — Gateway starts as P2P_GO and Headset as P2P_GC. They pair automatically using the static P2P link (`192.168.7.1` Gateway / `192.168.7.2` Headset).
 
 ### Step 2 — Verify
 
@@ -80,7 +80,7 @@ P2P_GO: DIRECT-xx started — Headset will auto-connect via static P2P link
 
 LED 0 begins rotating. Mode-specific connection:
 
-- **P2P mode** (default on fresh flash): Gateway boots as P2P_GO; Headset boots as P2P_CLIENT. They pair automatically — wait for both to log `Audio stream READY` and LED 0 to go solid ON.
+- **P2P mode** (default on fresh flash): Gateway boots as P2P_GO; Headset boots as P2P_GC. They pair automatically — wait for both to log `Audio stream READY` and LED 0 to go solid ON.
 - **STA mode**: run `wifi cred add -s <SSID> -p <pass> -k 1` then `wifi cred auto_connect` on both devices; both join the same AP; wait for `Audio stream READY`.
 
 **2. Buttons & LEDs**
@@ -89,25 +89,53 @@ LED 0 begins rotating. Mode-specific connection:
 
 | Board | Button | Gesture | Action |
 |-------|--------|---------|--------|
-| nRF5340 Audio DK + nRF7002EK | VOL- / sw0 (idx 0) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_CLIENT); save to NVS; reboot |
-| | VOL+ / sw1 (idx 1) | Single click | Volume Up (Headset only) |
-| | PLAY/PAUSE / sw2 (idx 2) | Single click | Start / stop audio stream |
-| | sw3 (idx 3) | Single click | Test tone trigger |
+| nRF5340 Audio DK + nRF7002EK | VOL- (idx 0) | Single click | Volume Down |
+| | VOL+ (idx 1) | Single click | Volume Up |
+| | PLAY/PAUSE (idx 2) | Single click | Play / Pause audio stream |
+| | BTN4 (idx 3) | Single click | Trigger test tone |
+| | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode; save to NVS; reboot |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
 | nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode; save to NVS; reboot |
+| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
+
+> **Note:** BTN5 (idx 4) is reserved for Wi-Fi mode control on nRF5340 Audio DK; VOL- (idx 0) is available for Volume Down.
 
 ### LEDs
 
 LED 0 reflects the Wi-Fi / audio link state. All other LEDs are available for application use.
 
+| Board | LED 0 (idx 0) | Other LEDs |
+|-------|---------------|------------|
+| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/audio state | RGB2 (idx 3–5) — role indicator (see below); LED1–3 (idx 6–8) — free |
+| nRF7002DK | LED1 — Wi-Fi / audio state | LED2 (idx 1) — free |
+| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / audio state | LED1–3 (idx 1–3) — free |
+
+nRF5340 Audio DK + nRF7002EK — RGB1 state effects:
+
+| State | Effect |
+|-------|--------|
+| Boot / connecting | RGB1 ROTATE (all three channels) |
+| Audio link active | RGB1 Green — Solid ON |
+| Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
+
+nRF5340 Audio DK + nRF7002EK — RGB2 role indicator (solid, set at boot):
+
+| Role | RGB2 colour |
+|------|-------------|
+| Gateway | Blue |
+| Headset | Green |
+
+nRF7002DK and nRF54LM20DK + nRF7002EB2 — LED 0 state effects:
+
 | State | Effect |
 |-------|--------|
 | Boot / connecting | ROTATE |
 | Audio link active | Solid ON |
-| Disconnected / error | Fast BLINK (100 ms half-period) |
+| Error / disconnected | Fast BLINK (100 ms half-period) |
 
 **3. Application logic**
 
@@ -151,11 +179,9 @@ nordic-wifi-audio/
 │       ├── ui-module.md          ← Button gestures, LED state machine
 │       ├── board-init-module.md  ← Multi-board hardware abstraction
 │       └── diagnostics-module.md ← memonitor brick + status shell
-├── lib/
-│   ├── opus/                     ← Opus codec submodule
-│   └── opus_interface/           ← Opus encoder/decoder wrapper
 ├── src/
 │   ├── audio/                    ← audio_system, audio_datapath, sw_codec, wifi_audio_rx
+│   │   └── opus_interface/       ← Opus encoder/decoder wrapper (moved from lib/)
 │   ├── modules/
 │   │   ├── network/net_event_app.c ← Wi-Fi event hooks → audio start/stop
 │   │   ├── ux/ux.c               ← button gestures + LED state machine
@@ -177,6 +203,12 @@ External zego bricks (referenced via `EXTRA_ZEPHYR_MODULES` in `CMakeLists.txt`)
 ../zego/bricks/button/    ← GPIO debounce, BUTTON_CHAN publish
 ../zego/bricks/led/       ← LED_CMD_CHAN subscriber, ROTATE/BLINK/BREATHE effects
 ../zego/bricks/memonitor/ ← heap and thread-stack HWM sampling, MEMONITOR_CHAN
+```
+
+West-managed third-party modules (populated by `west update`):
+
+```text
+../modules/lib/opus/      ← Opus codec source v1.5.2 (west-managed, replaces former lib/opus submodule)
 ```
 
 ### Workspace Setup
@@ -229,11 +261,19 @@ See the Nordic guide on [Workspace Application Setup](https://docs.nordicsemi.co
 
 ### Build
 
+> **One firmware, both modes.** The default build (with the `wifi-p2p` snippet) is a **dual-mode** image that supports **both** Wi-Fi Direct P2P **and** infrastructure STA with mDNS auto-discovery in a single binary. The active mode is stored in NVS; switch it at runtime with the `zego_wifi_mode` shell command or a Button 0 long-press. A smaller STA-only image (no snippet) is available when P2P is not needed.
+
 ```sh
 # Go to app root first
 cd nordic-wifi-audio
+```
 
-# Gateway — nRF5340 Audio DK + nRF7002EK (P2P default)
+#### Default (dual-mode P2P + STA) — recommended
+
+Built **with** `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`. On fresh flash the Gateway boots as **P2P_GO** and the Headset as **P2P_GC** (Group Client); they pair automatically at `192.168.7.1` / `192.168.7.2` — no router needed. Switch either device to **STA** at runtime (`zego_wifi_mode sta`): both join your AP, the Gateway advertises the audio service over mDNS, and the Headset auto-discovers it via DNS-SD (no hardcoded IP).
+
+```sh
+# Gateway — nRF5340 Audio DK + nRF7002EK
 west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_nrf5340audiodk -- \
   -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-gateway.conf" \
   -Dnordic-wifi-audio_SNIPPET=wifi-p2p
@@ -254,20 +294,35 @@ west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_nrf5340audiodk
   -Dnordic-wifi-audio_SNIPPET=wifi-p2p
 ```
 
-> The image-scoped `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` applies the snippet only to the app image (not to `hci_ipc`), avoiding spurious Kconfig warnings on the net core. The snippet adds `CONFIG_WIFI_NM_WPA_SUPPLICANT_P2P=y` and `CONFIG_NRF70_P2P_MODE=y`. Without it, P2P modes are unavailable at runtime.
+> The image-scoped `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` applies the NCS `wifi-p2p` snippet only to the app image (not to `hci_ipc`), adding `CONFIG_NRF70_P2P_MODE=y`, `CONFIG_NRF70_AP_MODE=y`, `CONFIG_WIFI_NM_WPA_SUPPLICANT_P2P=y`. mDNS (responder + DNS-SD) comes from `prj.conf` and stays enabled. The dual-mode image fits in ~99 % of the nRF5340's 1 MB flash thanks to picolibc and the removal of the LC3/CMSIS-DSP test-tone path.
+
+Per-role mode visibility (set in the role overlays): the Gateway exposes `sta` + `p2p_go`; the Headset exposes `sta` + `p2p_gc`. The mode-switch banner hint is printed only when more than one mode is compiled in.
+
+#### STA-only (no P2P) — smaller image
+
+Omit the snippet. Only STA mode is compiled in (~63 % flash). Both devices join an AP; mDNS auto-discovery works exactly as in the dual-mode STA path. Store credentials first: `wifi cred add -s <SSID> -p <pass> -k 1`.
+
+```sh
+# STA-only Gateway — nRF5340 Audio DK + nRF7002EK
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_sta_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-gateway.conf"
+
+# STA-only Headset — nRF5340 Audio DK + nRF7002EK only
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_sta_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-headset.conf"
+```
 
 #### Feature Overlay Builds
 
 | Overlay / Option | Purpose |
 |---------|---------|
+| `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` | Add P2P Wi-Fi Direct to the build (dual-mode). Omit for STA-only. |
 | `overlay-opus.conf` | Opus codec (STA mode only; mutually exclusive with P2P on nRF5340) |
 | `overlay-gateway-linein.conf` | LINE IN audio input on nRF5340 Audio DK |
-| `-Dnordic-wifi-audio_SNIPPET=wifi-p2p` | Enables P2P Wi-Fi Direct (required for default P2P mode) |
-| `overlay-sta.conf` | STA mode with credential placeholders |
 
-> **Opus and P2P are mutually exclusive** on nRF5340 Audio DK — both features together exceed the 1 MB flash budget. Use one or the other, not both.
+> **Opus and P2P are mutually exclusive** on nRF5340 Audio DK — Opus is an STA-only (no-snippet) option due to flash limitation. Use one or the other, not both.
 
-**Example — Gateway with Opus codec + LINE IN (STA mode, no P2P snippet):**
+**Example — STA Gateway with Opus codec + LINE IN (no P2P snippet):**
 
 ```sh
 west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_opus_linein -- \
@@ -297,12 +352,15 @@ west flash -d build_headset_nrf5340audiodk
 
 ### Developer Notes
 
-- **Default mode on fresh flash is P2P_GO (Gateway) / P2P_CLIENT (Headset).** No credentials needed — the two devices form a direct Wi-Fi link at `192.168.7.1` (Gateway) / `192.168.7.2` (Headset). The current mode is printed in the startup banner.
+- **One dual-mode firmware (default, with the `wifi-p2p` snippet).** A single image supports both P2P and STA-with-mDNS. It fits in ~99 % of the nRF5340's 1 MB flash because the C library is **picolibc** (−~15 KB flash / −~14 KB RAM vs newlib) and the LC3/CMSIS-DSP test-tone path was replaced with a local square-wave generator. An STA-only image (no snippet) is ~63 % flash.
+- **Runtime mode switch:** `zego_wifi_mode [sta|p2p_go|p2p_gc]` (or Button 0 long-press) saves the mode to NVS and reboots. Per-role visibility: Gateway exposes `sta`/`p2p_go`, Headset exposes `sta`/`p2p_gc` (via `CONFIG_ZEGO_WIFI_MODE_*_ENABLED`).
+- **STA mode auto-connection:** Store credentials with `wifi cred add -s <SSID> -p <pass> -k 1`, then `zego_wifi_mode sta`. The Gateway auto-connects and registers an mDNS DNS-SD service (`_nrfwifiaudio._udp.local`); the Headset (with `MDNS_RESOLVER` + `DNS_SERVER_IP_ADDRESSES`) discovers it via PTR→SRV→A and connects — no manual IP entry.
+- **P2P mode auto-connection:** Gateway boots as P2P_GO; Headset (P2P_GC) auto-connects using the GO MAC in `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`. The GO runs a DHCP server (needs `CONFIG_NET_MAX_CONN`/`NET_MAX_CONTEXTS` ≥ 8 so its port-67 socket can bind alongside mDNS). Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset).
 - **Headset role is nRF5340 Audio DK only.** The nRF7002DK and nRF54LM20DK boards support the Gateway role only.
-- **Opus and P2P are mutually exclusive on nRF5340 Audio DK.** The nRF5340 has 1 MB flash; enabling both `overlay-opus.conf` and the `wifi-p2p` snippet together overflows the budget. Pick one: Opus (STA mode) or P2P (raw PCM).
-- **Two separate entry points:** `wifi_audio_gateway/main.c` (Gateway) and `wifi_audio_headset/main.c` (Headset). The role is selected by the overlay at build time via `CONFIG_AUDIO_GATEWAY` / `CONFIG_AUDIO_HEADSET`.
-- **`CONFIG_LOG_BUFFER_SIZE=4096`** is set in `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`. The default 1 KB ring buffer is too small for the boot banner; without this increase, early log lines are silently overwritten.
-- **NVS erase resets mode to P2P_GO.** `--erase` (nRF7002DK / nRF5340 Audio DK) and `--recover` (nRF54LM20DK) wipe NVS — the device wakes in P2P_GO mode after next flash.
+- **Opus and P2P are mutually exclusive on nRF5340 Audio DK.** `overlay-opus.conf` is an STA-only option; never combine with the `wifi-p2p` snippet.
+- **Two separate entry points:** `wifi_audio_gateway/main.c` (Gateway) and `wifi_audio_headset/main.c` (Headset). Role is selected at build time via `CONFIG_AUDIO_GATEWAY` / `CONFIG_AUDIO_HEADSET` in the role overlay.
+- **`CONFIG_LOG_BUFFER_SIZE=8192`** is set in `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`. The default 1 KB ring buffer is too small for the boot banner.
+- **NVS erase:** `--erase` wipes NVS — the device boots in its default mode on next power-up (Gateway → P2P_GO, Headset → P2P_GC). Run `zego_wifi_mode sta` to switch to STA.
 - **Module specs** for non-obvious behavior: [audio-pipeline.md](docs/dev-specs/audio-pipeline.md), [network-module.md](docs/dev-specs/network-module.md), [ui-module.md](docs/dev-specs/ui-module.md).
 
 ---

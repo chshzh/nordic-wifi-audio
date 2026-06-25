@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-22-15-18 |
-| PRD Version | 2026-06-22-15-18 |
+| Version | 2026-06-25-13-35 |
+| PRD Version | 2026-06-25-13-30 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: square-wave test tone replaces LC3/CMSIS-DSP tone_gen (drops CMSIS_DSP); dual-mode peer resolution (P2P_GC fixed IP vs STA mDNS); P2P Client→P2P_GC |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added peer-address resolution by mode (P2P = fixed IP, STA = mDNS); Opus STA-only constraint documented |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
 
@@ -31,6 +32,10 @@ receive → decode → output on the Headset side. It consists of four source fi
 | `src/audio/audio_datapath.c` | Audio drift compensation, presentation delay, I2S timing |
 | `src/audio/sw_codec_select.c` | Codec abstraction layer (Opus / LC3 / raw PCM) |
 | `src/audio/wifi_audio_rx.c` | RX frame handler, UDP frame protocol, decode dispatch |
+
+A **single dual-mode firmware** carries both P2P and STA support (the default
+build applies the `wifi-p2p` snippet). Raw PCM is the default transport; Opus is
+STA-only (`overlay-opus.conf`) and is mutually exclusive with P2P on the nRF5340.
 
 ---
 
@@ -100,13 +105,14 @@ Resolution strategy depends on the Wi-Fi mode:
 
 | Mode | Resolution strategy | Where implemented |
 |---|---|---|
-| STA | mDNS DNS-SD resolution of `audiogateway.local` | `socket_utils.c` existing DNS-SD path |
-| P2P_CLIENT | Fixed GO IP `192.168.7.1` — no DHCP, no mDNS on P2P link | Set in `net_event_app.c` `dhcp_bound` hook |
+| STA | mDNS DNS-SD resolution of `_nrfwifiaudio._udp.local` → gateway IP:60010 (no hardcoded IP) | `socket_utils.c` DNS-SD path |
+| P2P_GC | Fixed GO IP `192.168.7.1` — no DHCP-discovery, no mDNS on P2P link | Set in `net_event_app.c` `dhcp_bound` hook |
 
-Gateway (UDP server) binds to its own static/assigned IP and listens for packets.
+Gateway (UDP server) — in both P2P_GO and STA-gateway roles — binds `INADDR_ANY:60010`
+and listens for packets; audio starts when the client connects / sends `AUDIO_START`.
 In P2P_GO mode the gateway has static IP `192.168.7.1`; in STA mode it uses its DHCP-assigned IP.
 
-The headset mDNS resolver code path is kept as-is for STA mode. The P2P_CLIENT path
+The headset mDNS resolver code path is kept as-is for STA mode. The P2P_GC path
 bypasses DNS-SD and calls `socket_utils_set_target_ipv4()` directly from the hook.
 
 ---
@@ -145,13 +151,25 @@ nRF54LM20A (no HFCLKAUDIO) this is a no-op.
 | `CONFIG_AUDIO_SAMPLE_RATE_HZ` | Sample rate (16000 / 24000 / 48000 Hz) | 48000 |
 | `CONFIG_AUDIO_BIT_DEPTH_BITS` | Bit depth (16 or 32) | 16 |
 | `CONFIG_AUDIO_MUTE` | Enable audio mute feature | n |
-| `CONFIG_AUDIO_TEST_TONE` | Enable test tone generator | n |
+| `CONFIG_AUDIO_TEST_TONE` | Enable test tone generator (local square-wave; does **not** `select TONE`) | n |
 | `CONFIG_ENCODER_STACK_SIZE` | Encoder thread stack size (bytes) | 4096 |
 | `CONFIG_ENCODER_THREAD_PRIO` | Encoder thread priority | 5 |
 | `CONFIG_AUDIO_DATAPATH_STACK_SIZE` | Datapath thread stack size | 4096 |
 | `CONFIG_AUDIO_DATAPATH_THREAD_PRIO` | Datapath thread priority | 4 |
 | `CONFIG_AUDIO_SYNC_TIMER_USES_RTC` | Use RTC0 for audio sync timer (nRF53 only) | y (nRF53) |
 | `CONFIG_STREAM_BIDIRECTIONAL` | Enable walkie-talkie bidirectional mode | n |
+
+### Test Tone Generator
+
+The test-tone feature (Button **BTN4**) is driven by a local square-wave
+generator, not the LC3/`nrf/lib/tone` sine. A static `square_tone_gen()` function
+— present in both `src/audio/audio_system.c` and `src/audio/audio_datapath.c` —
+fills one period of a 16-bit square wave (matching the old `tone_gen()` contract),
+replacing `tone_gen()` / `arm_sin_f32()`. As a result `CONFIG_CMSIS_DSP` and the
+`tone` library are no longer pulled in (`CONFIG_AUDIO_TEST_TONE` no longer
+`select TONE`); the feature still works, it just produces a square wave. The
+`contin_array` and `pcm_mix` libraries are retained (used for tone continuation /
+mixing and independent of CMSIS-DSP).
 
 ---
 

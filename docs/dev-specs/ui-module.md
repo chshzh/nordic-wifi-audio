@@ -15,7 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
-| 2026-06-22-15-18 | Rewrite: app ux module replaces custom button_handler.c + led.c; zego bricks own hardware; mode cycle updated (STA→P2P_GO→P2P_CLIENT, no SoftAP) |
+| 2026-06-22-15-18 | Rewrite: app ux module replaces custom button_handler.c + led.c; zego bricks own hardware; mode cycle updated (STA→P2P_GO→P2P_GC, no SoftAP) |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
 
 ---
@@ -58,7 +58,7 @@ dedicated mode/state button:
 | `SINGLE_CLICK` | Print current Wi-Fi mode to UART (no reboot, informational only) |
 | `LONG_PRESS` (≥ 3 s) | Cycle Wi-Fi mode → save to NVS → reboot into new mode |
 
-Mode cycle order: **STA → P2P_GO → P2P_CLIENT → STA** (wraps around; no SoftAP).
+Mode cycle order: **STA → P2P_GO → P2P_GC → STA** (wraps around; no SoftAP).
 
 Audio-domain buttons (volume up/down, play/pause) remain on the legacy `button_chan`
 path through `button_msg_sub_thread` in main.c until Step 3.5 fully consolidates.
@@ -109,8 +109,8 @@ static void cycle_wifi_mode(void)
     enum zego_wifi_mode next;
     switch (current) {
     case ZEGO_WIFI_MODE_STA:       next = ZEGO_WIFI_MODE_P2P_GO;     break;
-    case ZEGO_WIFI_MODE_P2P_GO:    next = ZEGO_WIFI_MODE_P2P_CLIENT; break;
-    case ZEGO_WIFI_MODE_P2P_CLIENT:next = ZEGO_WIFI_MODE_STA;        break;
+    case ZEGO_WIFI_MODE_P2P_GO:    next = ZEGO_WIFI_MODE_P2P_GC; break;
+    case ZEGO_WIFI_MODE_P2P_GC:next = ZEGO_WIFI_MODE_STA;        break;
     default:                       next = ZEGO_WIFI_MODE_P2P_GO;     break;
     }
 
@@ -153,7 +153,7 @@ State events that arrive before `app_ux_ready` are replayed once the flag is set
 | `CONFIG_APP_UX_WIFI_LED_IDX` | LED index for Wi-Fi status (0 = first LED) | 0 |
 | `CONFIG_ZEGO_BUTTON_LONG_PRESS_MS` | Long-press threshold for mode cycle | 3000 |
 | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO` | Gateway default: P2P_GO | y |
-| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_CLIENT` | Headset default: P2P_CLIENT | y |
+| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GC` | Headset default: P2P_GC | y |
 
 Per-board button/LED counts set in `boards/*.conf`:
 
@@ -192,7 +192,7 @@ void channel_assignment_set(enum audio_channel channel);  /* runtime mode only *
 | UART log string | Expected condition |
 |---|---|
 | `[ux] Mode: P2P_GO` (on single-click) | Mode print on Button 0 single-click |
-| `[ux] Mode cycle: P2P_GO → P2P_CLIENT` | Long-press mode cycle executed |
+| `[ux] Mode cycle: P2P_GO → P2P_GC` | Long-press mode cycle executed |
 | `[ux] LED → ROTATE` | APP_WIFI_STATE_CONNECTING received |
 | `[ux] LED → ON` | APP_WIFI_STATE_CONNECTED received |
 | `[ux] LED → BLINK` | APP_WIFI_STATE_ERROR received |

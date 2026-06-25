@@ -51,7 +51,7 @@ These are locked into the plan. Items marked **[ASSUMPTION]** are reasonable def
 
 | Concern | Today (custom, in `nordic-wifi-audio/src/`) | Target (zego) | Action |
 |---------|----------------------------------------------|---------------|--------|
-| Wi-Fi mode select + NVS persistence | `src/net/mode_selector.c/.h` (`wifi_mode` shell, default P2P at line 37) | `zego/bricks/wifi` (`CONFIG_ZEGO_WIFI`, `WIFI_MODE_CHAN`, NVS key `app/app_wifi_mode`) | **Retire custom; adopt brick** |
+| Wi-Fi mode select + NVS persistence | `src/net/mode_selector.c/.h` (`wifi_mode` shell, default P2P at line 37) | `zego/bricks/wifi` (`CONFIG_ZEGO_WIFI`, `WIFI_MODE_CHAN`, NVS key `app/zego_wifi_mode`) | **Retire custom; adopt brick** |
 | Wi-Fi events / DHCP / P2P / AP | `src/net/net_event_mgmt.c/.h` (semaphores: `iface_up_sem`, `wpa_supplicant_ready_sem`, `ipv4_dhcp_bond_sem`, `p2p_peer_connected_sem`) | `zego/bricks/network` (weak-hook API + zbus) | **Retire custom; adopt brick + implement hooks** |
 | STA/P2P connect logic | `src/net/wifi_utils.c/.h` (`wifi_run_p2p_go_mode`, `wifi_run_p2p_client_mode`, `wifi_utils_auto_connect_stored`) | `zego/bricks/network` + `zego/bricks/wifi` | **Retire custom; adopt brick** |
 | Buttons | `src/modules/button_handler.c/.h` | `zego/bricks/button` (`CONFIG_ZEGO_BUTTON`, `BUTTON_CHAN`) | **Retire custom; adopt brick** |
@@ -66,7 +66,7 @@ These are locked into the plan. Items marked **[ASSUMPTION]** are reasonable def
 ### 1.2 Wiring change
 
 - **`CMakeLists.txt`:** add `EXTRA_ZEPHYR_MODULES` block (before `find_package(Zephyr ...)`) pointing at `../zego/bricks/{button,led,wifi,network,memonitor}` (pattern from `template/CMakeLists.txt`). Drop `add_subdirectory(src/net)` pieces that become dead.
-- **`prj.conf`:** add `CONFIG_ZEGO_{BUTTON,LED,WIFI,NETWORK,MEMONITOR}=y`, `CONFIG_APP_UX_MODULE=y`; remove `CONFIG_APP_WIFI_MODE_SELECTOR` and custom button/led symbols.
+- **`prj.conf`:** add `CONFIG_ZEGO_{BUTTON,LED,WIFI,NETWORK,MEMONITOR}=y`, `CONFIG_APP_UX_MODULE=y`; remove `CONFIG_ZEGO_WIFI_MODE_SELECTOR` and custom button/led symbols.
 - **`boards/*.conf`:** set per-board `CONFIG_ZEGO_BUTTON_NUM_BUTTONS`, `CONFIG_ZEGO_LED_NUM_LEDS`, and `CONFIG_APP_UX_*` (Audio DK uses `ROTATE_FIRST_LED=3`, `ROTATE_COUNT=3`, `CONNECTED_LED=4`, `CONNECTED_LED_GREEN_ONLY=y`).
 - **`prj.conf`:** set `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO=y` (gateway) / `_P2P_CLIENT=y` (headset) as the default; STA selected via overlay.
 
