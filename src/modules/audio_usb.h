@@ -7,12 +7,22 @@
 #ifndef _AUDIO_USB_H_
 #define _AUDIO_USB_H_
 
+#include <zephyr/usb/usbd.h>
 #include <data_fifo.h>
 
 #if (CONFIG_AUDIO_SOURCE_USB && !CONFIG_AUDIO_SAMPLE_RATE_48000_HZ)
 /* Only 48kHz is supported when using USB */
 #error USB only supports 48kHz
 #endif /* (CONFIG_AUDIO_SOURCE_USB && !CONFIG_AUDIO_SAMPLE_RATE_48000_HZ) */
+
+/**
+ * @brief Build and initialize the USBD device context for the UAC2 device
+ *
+ * @param msg_cb  Optional USBD message callback (may be NULL)
+ *
+ * @return Pointer to the initialized USBD context, or NULL on failure
+ */
+struct usbd_context *audio_usbd_init_device(usbd_msg_cb_t msg_cb);
 
 /**
  * @brief Set fifo buffers to be used by USB module and start sending/receiving data

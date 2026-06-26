@@ -124,6 +124,8 @@ config AUDIO_SOURCE_USB
 	help
 	  Set USB as audio source. Note that this forces the
 	  stream to be unidirectional because of CPU load.
+	  Uses UAC2 (USB Audio Class 2.0) on the USBD-next stack
+	  (enabled for the gateway role in src/modules/Kconfig.defaults).
 
 config AUDIO_SOURCE_I2S
 	bool "Use I2S as audio source"
