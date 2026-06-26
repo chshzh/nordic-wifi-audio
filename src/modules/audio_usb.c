@@ -116,7 +116,12 @@ static void data_recv_cb(const struct device *dev, uint8_t terminal, void *buf, 
 	}
 
 	if (size != USB_FRAME_SIZE_STEREO) {
-		LOG_WRN("Wrong length: %u", size);
+		/* Hosts (e.g. macOS) occasionally send a runt iso-OUT packet that is
+		 * not the nominal 1 ms / USB_FRAME_SIZE_STEREO size. Drop it (one
+		 * inaudible 1 ms gap) — it cannot go into the fixed-size data_fifo
+		 * block. Logged at DBG since it is an expected, benign host artifact.
+		 */
+		LOG_DBG("Wrong length: %u", size);
 		k_mem_slab_free(&usb_rx_slab, buf);
 		return;
 	}

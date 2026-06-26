@@ -28,6 +28,13 @@ config USBD_LOG_LEVEL
 config UDC_DRIVER_LOG_LEVEL
 	default 1
 
+# The UAC2 class logs "request ep 0x.. len 0 cancelled" at WRN every time a
+# 1 ms isochronous OUT slot arrives empty (routine on a synchronous endpoint
+# when the host does not fill every frame). Audio is unaffected; drop the class
+# log level to ERR to silence the spam.
+config USBD_UAC2_LOG_LEVEL
+	default 1
+
 endif # AUDIO_SOURCE_USB
 
 endif # AUDIO_DEV = 2 (GATEWAY)

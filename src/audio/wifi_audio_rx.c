@@ -163,9 +163,26 @@ void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 						      // and footers
 	static size_t current_frame_size = 0;
 
+	/* Each audio frame is sent as two UDP datagrams (see socket_utils_tx_data
+	 * chunking). If the tail datagram is lost over Wi-Fi, a partial frame is
+	 * left in the buffer. When the next datagram begins with a valid frame
+	 * header (start sequence + known identifier) it starts a NEW frame, so
+	 * discard the stale partial data and resync here — otherwise it would
+	 * overflow into and corrupt this new frame, cascading one packet loss
+	 * into several dropped frames.
+	 */
+	if (data_size >= HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
+	    p_data[1] == START_SEQUENCE_2 &&
+	    (p_data[2] == SEND_DATA_SIGN || p_data[2] == SEND_CMD_SIGN)) {
+		current_frame_size = 0;
+	}
+
 	// Copy incoming data chunk to frame buffer if it fits
 	if (current_frame_size + data_size > FULL_FRAME_SIZE) {
-		LOG_ERR("Frame buffer overflow, discarding accumulated data.");
+		/* Recoverable: a lost datagram left an unterminated partial frame.
+		 * Drop it and resync (DBG, not ERR — this is expected on UDP loss).
+		 */
+		LOG_DBG("Frame buffer overflow, discarding accumulated data.");
 		current_frame_size = 0; // Reset if overflowed
 		return;
 	}
@@ -199,14 +216,20 @@ void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 							"size.");
 					}
 				} else {
-					LOG_ERR("Unexpected data identifier.");
+					/* Orphan tail after a lost head datagram landed a
+					 * non-data id at offset 2 — recoverable, resync.
+					 */
+					LOG_DBG("Unexpected data identifier.");
 				}
 
 				// Reset buffer for the next frame
 				current_frame_size = 0;
 			}
 		} else {
-			LOG_WRN("Invalid start sequence, discarding packet.");
+			/* Lost head datagram: this orphan tail does not start with the
+			 * frame header. Drop and resync (DBG — expected on UDP loss).
+			 */
+			LOG_DBG("Invalid start sequence, discarding packet.");
 			current_frame_size = 0; // Reset on invalid start sequence
 		}
 	}
