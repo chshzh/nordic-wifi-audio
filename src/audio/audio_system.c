@@ -120,14 +120,16 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 	uint32_t blocks_locked_num;
 
 	int debug_trans_count = 0;
-	size_t encoded_data_size = 0;
 
 	void *tmp_pcm_raw_data[CONFIG_FIFO_FRAME_SPLIT_NUM];
 	static uint8_t pcm_raw_data[FRAME_SIZE_BYTES];
 
-	static uint8_t *encoded_data;
 	static size_t pcm_block_size;
+#ifdef CONFIG_SW_CODEC_OPUS
+	size_t encoded_data_size = 0;
+	static uint8_t *encoded_data;
 	static uint32_t test_tone_finite_pos;
+#endif /* CONFIG_SW_CODEC_OPUS */
 
 	while (1) {
 		/* Don't start encoding until the stream needing it has started */

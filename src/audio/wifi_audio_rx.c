@@ -59,7 +59,6 @@ void audio_data_frame_process(uint8_t *p_data, size_t data_size)
 	struct audio_pcm_data_t *data_received = NULL;
 	// static struct rx_stats rx_stats[AUDIO_CH_NUM];
 	static uint32_t num_overruns;
-	static uint32_t num_thrown;
 
 	if (!initialized) {
 		ERR_CHK_MSG(-EPERM, "Data received but wifi_audio_rx is not initialized");
