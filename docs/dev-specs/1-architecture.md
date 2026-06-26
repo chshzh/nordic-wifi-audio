@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-25-13-35 |
-| PRD Version | 2026-06-25-13-30 |
+| Version | 2026-06-26-10-00 |
+| PRD Version | 2026-06-26-09-55 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-26-10-00 | Updated to PRD v2026-06-26-09-55: USB audio class migrated UAC1→UAC2; added `audio_usb_init.c` to module map |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: dual-mode boot/dispatch; SD card + src/debug removed from module map; picolibc + NET_MAX_CONN/CONTEXTS=8 in memory budget; P2P Client→P2P_GC |
 | 2026-06-23-14-48 | Renamed from architecture.md; Flash Partition Layout moved to 2-dts-partition.md; Memory Budget replaced by reference to 3-memopt.md; Target Board(s) updated to P1 |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: zego brick architecture, P2P default boot sequence, module map revised, memory budget updated |
@@ -67,7 +68,8 @@ nordic-wifi-audio/
 │   │   ├── network/
 │   │   │   └── net_event_app.c     — strong overrides of zego weak hooks → audio + state
 │   │   ├── audio_i2s.c/h           — nRF53 I2S PCM driver wrapper
-│   │   ├── audio_usb.c/h           — USB audio class (headset composite)
+│   │   ├── audio_usb.c/h           — UAC2 audio class, data_fifo bridge
+│   │   ├── audio_usb_init.c        — USBD device context for UAC2
 │   │   ├── audio_sync_timer.c/h    — RTC-based audio sync timer (nRF53 only)
 │   │   ├── hw_codec.c/h            — CS47L63 HW audio codec (nRF5340 Audio DK)
 │   │   ├── sd_card.c/h             — SD card FAT access (present; disabled by default)

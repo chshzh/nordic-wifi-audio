@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-06-25-13-30 |
+| Version | 2026-06-26-11-29 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
@@ -18,6 +18,8 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-26-11-29 | HW-validation correction: nRF54LM20DK runs UAC2 at **Full-Speed**, not High-Speed — HS enumeration broke the USB audio stream on macOS hosts (iso-OUT continuously cancelled). All boards now UAC2 @ Full-Speed; the per-board lower-latency HS benefit noted in the 09-55 entry does not apply and is deferred to future work. |
+| 2026-06-26-09-55 | Migrate USB audio source from USB Audio Class 1.0 (legacy stack) to UAC2 (USB Audio Class 2.0, USBD-next stack) on all boards. UAC2 enables explicit feedback (prevents long-term sample drift) and, on nRF54LM20DK, High-Speed enumeration (125 µs vs 1 ms service interval) for lower USB-side latency. Host-compatibility caveat: UAC2 is class-native on Windows 10+, macOS, and Linux; pre-Windows-10 hosts (which UAC1 supported driver-free) are no longer covered. |
 | 2026-06-25-13-30 | Reverse the "separate binaries" decision: single dual-mode firmware (default build, with wifi-p2p snippet) now supports both P2P and STA-with-mDNS, runtime-switchable. Enabled by switching to picolibc (−~15 KB flash/−~14 KB RAM) and replacing the LC3/CMSIS-DSP test-tone with a local square-wave. Renamed P2P Client → P2P_GC (Group Client) throughout. Per-role mode visibility (Gateway: STA+P2P_GO, Headset: STA+P2P_GC). Verified on HW: P2P auto-connect+stream and STA mDNS auto-discovery+stream both working. |
 | 2026-06-24-15-04 | Separate P2P and STA into distinct firmware binaries; P2P built with -Dnordic-wifi-audio_SNIPPET=wifi-p2p, STA built without; mDNS DNS-SD auto-discovery implemented for STA mode (headset resolves gateway IP via PTR query); src/debug removed; SD card module disabled; memonitor simplified to ZView-only; COMPILER_OPT moved to overlay-opus.conf |
 | 2026-06-23-14-27 | Promote nRF7002DK and nRF54LM20DK from deferred to P1 (gateway only, build verified); role-specific boot banner (gateway/headset names); log buffer increased on nRF5340 Audio DK for reliable boot logging; README build section updated with multi-board commands; full structural reformat to PRD template |
@@ -150,7 +152,7 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 | I/O path | Board | Notes |
 |---|---|---|
 | I2S + CS47L63 codec (3.5 mm jack) | nRF5340 Audio DK | Hardware codec; auto-disabled on all other boards |
-| USB audio class (headset composite) | All boards | Gateway presents as USB audio device |
+| USB audio class (UAC2 headset composite) | All boards | Gateway presents as a USB Audio Class 2.0 device; class-native on Windows 10+/macOS/Linux. Full-Speed on all boards (nRF54LM20DK is HS-capable but forced to Full-Speed — see specs). |
 | LINE IN (3.5 mm) | nRF5340 Audio DK | External audio source; enabled via `overlay-gateway-linein.conf` |
 | SD card WAV playback | nRF5340 Audio DK | `CONFIG_NRF5340_AUDIO_SD_CARD_MODULE=y`; graceful skip if absent |
 
@@ -180,7 +182,7 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 | FR-005 | developer | have both devices optionally join an existing Wi-Fi network and auto-discover each other | I can evaluate the demo in an infrastructure environment | STA mode enabled via overlay or long-press mode cycle; Gateway advertises `audiogateway.local` via mDNS; Headset resolves and connects within 10 s of both devices joining; Opus overlay is valid in STA mode only | [network-module.md](../dev-specs/network-module.md) |
 | FR-006 | user | control the device with physical buttons | the demo does not require a serial terminal | Button 0 short = print Wi-Fi mode to UART; Button 0 long ≥ 3 s = cycle mode + reboot; Button 1 (headset) = Volume Up; Button 2 = Play/Pause; Button 3 = test tone; all actions debounced and reliable across all supported boards | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-007 | user | have LEDs reflect the device state | the demo is self-explanatory without a serial monitor | Rotate while connecting; solid ON when audio link established; fast blink on error / disconnected; consistent across all boards | [ui-module.md](../dev-specs/ui-module.md) |
-| FR-008 | developer | have the Gateway accept USB audio input | any computer can feed audio into the demo without hardware modification | Gateway presents as USB audio class device (headset composite); PC microphone audio streams over Wi-Fi; received Wi-Fi audio plays on USB headphones | [board-init-module.md](../dev-specs/board-init-module.md) |
+| FR-008 | developer | have the Gateway accept USB audio input | any computer can feed audio into the demo without hardware modification | Gateway presents as a UAC2 (USB Audio Class 2.0) device (headset composite), class-native on Windows 10+/macOS/Linux; PC microphone audio streams over Wi-Fi; received Wi-Fi audio plays on USB headphones | [board-init-module.md](../dev-specs/board-init-module.md) |
 
 ### P2 — Nice to Have
 

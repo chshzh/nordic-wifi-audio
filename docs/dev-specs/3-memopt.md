@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-25-13-35 |
-| PRD Version | 2026-06-25-13-30 |
+| Version | 2026-06-26-10-00 |
+| PRD Version | 2026-06-26-09-55 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Method | Build output flash summary; ZView watermark measurements pending (Phase 4.2) |
@@ -21,6 +21,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-26-10-00 | Updated to PRD v2026-06-26-09-55: USB audio UAC1→UAC2 (USBD-next stack). Flash/RAM delta vs legacy `USB_DEVICE_STACK` is **TBD — pending Phase 4.2** build comparison; the next stack drops the legacy USB device support in favour of UDC + `usbd_uac2`. No change to audio FIFO sizing (1 ms framing retained). |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: picolibc (−~15 KB flash/−~14 KB RAM); removed CMSIS-DSP/LC3 tone path (square-wave test tone), SD card + power-measurement modules, src/debug; memonitor ZView-only; NET_MAX_CONN/NET_MAX_CONTEXTS=8 for dual-mode socket budget; dual-mode flash figures |
 | 2026-06-23-14-48 | Initial report: pre-refactor flash baselines from 1-architecture.md; stack and heap measurements marked TBD pending Phase 4.2 ZView pass |
 

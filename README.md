@@ -25,7 +25,7 @@
 - **Dual device roles** — Gateway (audio source, UDP server) and Headset (audio sink, UDP client); role selected at build time.
 - **Raw PCM streaming (default)** — low-latency uncompressed 16-bit PCM over UDP with no codec overhead in the default build.
 - **Opus codec option** — add `overlay-opus.conf` for compressed streaming with configurable bitrate (STA mode only; mutually exclusive with P2P on nRF5340).
-- **USB audio source (default)** — Gateway appears as a USB sound card on the host PC; set it as the output device and any audio plays wirelessly.
+- **USB audio source (default)** — Gateway appears as a UAC2 USB sound card on the host PC (class-native on Windows 10+, macOS, and Linux); set it as the output device and any audio plays wirelessly.
 - **Analog audio source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
 - **Runtime mode switching** — Button 0 long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
 - **Visual status feedback** — LED rotates while connecting, solid ON during active audio link, fast blink on error.
