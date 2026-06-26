@@ -4,10 +4,86 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#include <dt-bindings/usb/audio.h>
+
 / {
 	gpio_fwd: nrf-gpio-forwarder {
 		compatible = "nordic,nrf-gpio-forwarder";
 		status = "disabled";
+	};
+};
+
+/* The base board DTS (nrf5340_audio_dk_nrf5340_cpuapp_common.dtsi) defines a
+ * legacy UAC1 `hs_0` (usb-audio-hs) node under &usbd. Remove it and replace it
+ * with a UAC2 node so this board matches the other targets. The base DTS is
+ * shared and must not be edited, so the override happens here.
+ */
+/delete-node/ &hs_0;
+
+/* UAC2 (USB Audio Class 2.0) headset device — required by audio_usb.c
+ * (DT_NODELABEL(uac2_headset)). Full-Speed on the nRF5340 usbd controller.
+ */
+/ {
+	uac2_headset: usb_audio2 {
+		compatible = "zephyr,uac2";
+		status = "okay";
+		full-speed;
+		audio-function = <AUDIO_FUNCTION_HEADSET>;
+
+		uac_aclk: aclk {
+			compatible = "zephyr,uac2-clock-source";
+			clock-type = "internal-programmable";
+			frequency-control = "read-only";
+			sampling-frequencies = <48000>;
+			sof-synchronized;
+		};
+
+		out_terminal: out_terminal {
+			compatible = "zephyr,uac2-input-terminal";
+			clock-source = <&uac_aclk>;
+			terminal-type = <USB_TERMINAL_STREAMING>;
+			front-left;
+			front-right;
+		};
+
+		headphones_output: headphones {
+			compatible = "zephyr,uac2-output-terminal";
+			data-source = <&out_terminal>;
+			clock-source = <&uac_aclk>;
+			terminal-type = <BIDIRECTIONAL_TERMINAL_HEADSET>;
+			assoc-terminal = <&mic_input>;
+		};
+
+		in_terminal: in_terminal {
+			compatible = "zephyr,uac2-output-terminal";
+			data-source = <&mic_input>;
+			clock-source = <&uac_aclk>;
+			terminal-type = <USB_TERMINAL_STREAMING>;
+		};
+
+		mic_input: microphone {
+			compatible = "zephyr,uac2-input-terminal";
+			clock-source = <&uac_aclk>;
+			terminal-type = <BIDIRECTIONAL_TERMINAL_HEADSET>;
+			front-left;
+			front-right;
+		};
+
+		as_iso_out: out_interface {
+			compatible = "zephyr,uac2-audio-streaming";
+			linked-terminal = <&out_terminal>;
+			subslot-size = <2>;
+			bit-resolution = <16>;
+			polling-period-us = <1000>;
+		};
+
+		as_iso_in: in_interface {
+			compatible = "zephyr,uac2-audio-streaming";
+			linked-terminal = <&in_terminal>;
+			subslot-size = <2>;
+			bit-resolution = <16>;
+			polling-period-us = <1000>;
+		};
 	};
 };
 

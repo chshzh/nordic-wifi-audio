@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
+#include <dt-bindings/usb/audio.h>
+
 /* nRF54LM20DK has 4 buttons (sw0-sw3), but the nRF7002EB2 shield deletes
  * button_3 / sw3 due to GPIO pin conflicts. Remap sw3 to button1 and sw4 to
  * button0 so all aliases resolve to UNIQUE GPIO pins (required to avoid
@@ -17,19 +19,74 @@
 	};
 };
 
-/* USB audio headset device — required by audio_usb.c (DT_NODELABEL(hs_0)).
- * nRF54LM20DK uses usbhs (USB High-Speed), not usbd.
+/* UAC2 (USB Audio Class 2.0) headset device — required by audio_usb.c
+ * (DT_NODELABEL(uac2_headset)). The usbhs (DWC2) controller is forced to
+ * Full-Speed (CONFIG_UDC_DRIVER_HIGH_SPEED_SUPPORT_ENABLED=n in the board conf)
+ * because High-Speed enumeration broke the isochronous OUT audio stream on
+ * macOS hosts. Full-Speed (1 ms / 192-byte packets) matches the audio FIFO
+ * block sizing and is the validated-working mode.
  */
-&usbhs {
-	hs_0: hs_0 {
-		compatible = "usb-audio-hs";
-		mic-feature-mute;
-		mic-channel-l;
-		mic-channel-r;
+/ {
+	uac2_headset: usb_audio2 {
+		compatible = "zephyr,uac2";
+		status = "okay";
+		full-speed;
+		audio-function = <AUDIO_FUNCTION_HEADSET>;
 
-		hp-feature-mute;
-		hp-channel-l;
-		hp-channel-r;
+		uac_aclk: aclk {
+			compatible = "zephyr,uac2-clock-source";
+			clock-type = "internal-programmable";
+			frequency-control = "read-only";
+			sampling-frequencies = <48000>;
+			sof-synchronized;
+		};
+
+		out_terminal: out_terminal {
+			compatible = "zephyr,uac2-input-terminal";
+			clock-source = <&uac_aclk>;
+			terminal-type = <USB_TERMINAL_STREAMING>;
+			front-left;
+			front-right;
+		};
+
+		headphones_output: headphones {
+			compatible = "zephyr,uac2-output-terminal";
+			data-source = <&out_terminal>;
+			clock-source = <&uac_aclk>;
+			terminal-type = <BIDIRECTIONAL_TERMINAL_HEADSET>;
+			assoc-terminal = <&mic_input>;
+		};
+
+		in_terminal: in_terminal {
+			compatible = "zephyr,uac2-output-terminal";
+			data-source = <&mic_input>;
+			clock-source = <&uac_aclk>;
+			terminal-type = <USB_TERMINAL_STREAMING>;
+		};
+
+		mic_input: microphone {
+			compatible = "zephyr,uac2-input-terminal";
+			clock-source = <&uac_aclk>;
+			terminal-type = <BIDIRECTIONAL_TERMINAL_HEADSET>;
+			front-left;
+			front-right;
+		};
+
+		as_iso_out: out_interface {
+			compatible = "zephyr,uac2-audio-streaming";
+			linked-terminal = <&out_terminal>;
+			subslot-size = <2>;
+			bit-resolution = <16>;
+			polling-period-us = <1000>;
+		};
+
+		as_iso_in: in_interface {
+			compatible = "zephyr,uac2-audio-streaming";
+			linked-terminal = <&in_terminal>;
+			subslot-size = <2>;
+			bit-resolution = <16>;
+			polling-period-us = <1000>;
+		};
 	};
 };
 
