@@ -200,6 +200,16 @@ static int audio_sync_timer_init(void)
 	tep1 = nrfx_timer_task_address_get(&audio_sync_hf_timer_instance,
 					   AUDIO_SYNC_HF_TIMER_I2S_FRAME_START_EVT_CAPTURE);
 
+	/* A soft reboot (sys_reboot on Wi-Fi mode switch) does not reset the DPPI
+	 * endpoint registers — they still hold the previous boot's channel, so
+	 * nrfx_gppi_conn_alloc() below fails with -EINVAL (it rejects an endpoint
+	 * that already has a channel). Clear any stale connection first so re-init
+	 * succeeds after a soft reboot too (a power cycle clears them in hardware).
+	 */
+	nrfx_gppi_ep_clear(eep0);
+	nrfx_gppi_ep_clear(tep0);
+	nrfx_gppi_ep_clear(tep1);
+
 	ret = nrfx_gppi_conn_alloc(eep0, tep0, &dppi_handle_i2s_frame_start);
 	if (ret < 0) {
 		LOG_ERR("nrfx DPPI channel alloc error (I2S frame start): %d", ret);
@@ -216,6 +226,11 @@ static int audio_sync_timer_init(void)
 	tep1 = nrfx_timer_task_address_get(&audio_sync_hf_timer_instance,
 					   AUDIO_SYNC_HF_TIMER_CURR_TIME_CAPTURE);
 
+	/* Clear stale connections left by a soft reboot (see note above). */
+	nrfx_gppi_ep_clear(eep0);
+	nrfx_gppi_ep_clear(tep0);
+	nrfx_gppi_ep_clear(tep1);
+
 	ret = nrfx_gppi_conn_alloc(eep0, tep0, &dppi_handle_curr_time_capture);
 	if (ret < 0) {
 		LOG_ERR("nrfx DPPI channel alloc error (I2S frame start): %d", ret);
@@ -228,6 +243,10 @@ static int audio_sync_timer_init(void)
 	eep0 = nrf_ipc_event_address_get(NRF_IPC, AUDIO_SYNC_TIMER_NET_APP_IPC_EVT);
 	tep0 = nrfx_rtc_task_address_get(&audio_sync_lf_timer_instance, NRF_RTC_TASK_CLEAR);
 	tep1 = nrfx_timer_task_address_get(&audio_sync_hf_timer_instance, NRF_TIMER_TASK_START);
+	/* Clear stale connections left by a soft reboot (see note above). */
+	nrfx_gppi_ep_clear(eep0);
+	nrfx_gppi_ep_clear(tep0);
+	nrfx_gppi_ep_clear(tep1);
 	ret = nrfx_gppi_conn_alloc(eep0, tep0, &dppi_handle_rtc_start);
 	if (ret < 0) {
 		LOG_ERR("nrfx DPPI channel alloc error (I2S frame start): %d", ret);
@@ -241,6 +260,9 @@ static int audio_sync_timer_init(void)
 	/* Initialize functionality for synchronization between RTC and TIMER */
 	eep0 = nrfx_rtc_event_address_get(&audio_sync_lf_timer_instance, NRF_RTC_EVENT_TICK);
 	tep0 = nrfx_timer_task_address_get(&audio_sync_hf_timer_instance, NRF_TIMER_TASK_CLEAR);
+	/* Clear stale connections left by a soft reboot (see note above). */
+	nrfx_gppi_ep_clear(eep0);
+	nrfx_gppi_ep_clear(tep0);
 	ret = nrfx_gppi_conn_alloc(eep0, tep0, &dppi_handle_timer_sync_with_rtc);
 	if (ret < 0) {
 		LOG_ERR("nrfx DPPI channel alloc error (I2S frame start): %d", ret);
