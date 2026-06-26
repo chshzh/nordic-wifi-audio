@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|-------|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-26-10-58 |
+| Version | 2026-06-26-14-24 |
 | PRD Version | 2026-06-26-09-55 |
 | Specs Version | 2026-06-26-10-00 |
 | Plan Version | 2026-06-26-10-32 |
@@ -22,6 +22,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-26-14-24 | Added Known Limitation: periodic crackle from uncompensated clock drift (drift comp unwired in Wi-Fi port) — pre-existing, out of scope. Recorded Wi-Fi RX framing resync fix + UAC2/rx log quieting as done. |
 | 2026-06-26-11-10 | Corrected verdict to PASS. End-to-end USB audio confirmed working with sustained host playback (`USB RX first data received.` @ 29.2 s; headset plays). Earlier FAIL was a test-method artifact (intermittent `say` playback + short capture window). |
 | 2026-06-26-10-58 | Initial report. UAC2 enumeration + P2P + crash-fix PASS; end-to-end USB audio sample flow inconclusive (later corrected). |
 
@@ -127,11 +128,30 @@ Single boot, stable for full 90 s capture, no faults (one benign `wpa_supp: Inva
 |---------|----------|-------|
 | NULL sof_cb crash (all gateway builds) | P0 | ✅ Fixed this session |
 | End-to-end USB audio | P0 | ✅ Confirmed working (developer HW run) |
-| `usbd_uac2 len 0 cancelled` log noise | P2 | Optional: lower `CONFIG_USBD_UAC2_LOG_LEVEL` |
-| `wifi_audio_rx: Invalid start sequence` occasional drops | P2 | Pre-existing (not UAC2); investigate separately if needed |
+| `usbd_uac2 len 0 cancelled` log noise | P2 | ✅ Quieted (`CONFIG_USBD_UAC2_LOG_LEVEL=1`) |
+| `wifi_audio_rx` framing errors + desync cascade | P2 | ✅ Resync fix + logs → DBG (HW-confirmed audio still plays); pre-existing, not UAC2 |
+| **Audible crackle every few seconds** | P2 | **Known limitation** — uncompensated clock drift (drift comp unwired in Wi-Fi port); see below |
 | Audio DK gateway flash 99.57% | P1 | `chsh-sk-ncs-3.3-memopt` |
 
 **All P0 closed.** UAC2 migration validated on hardware. Remaining items are P1/P2 polish.
 
-> Action item: rebuild + reflash the **nRF7002DK** and **nRF54LM20DK** gateways with the
-> `sof_cb` fix (they were built before the fix and would crash-loop otherwise).
+---
+
+## Known Limitation — periodic audio crackle (clock drift)
+
+Audio streams continuously and is intelligible, but a short **crackle recurs every few
+seconds**. Root cause (confirmed by code inspection, HW behaviour, and the steady I2S
+under-run counter): the headset's **drift compensation is not wired up in the Wi-Fi port**.
+`audio_datapath_stream_out()` takes no `sdu_ref`/timestamp (the plumbing is commented out),
+so the drift state machine never leaves `DRIFT_STATE_INIT`, `hfclkaudio_set()` never tunes
+the APLL, and the headset I2S clock free-runs and drifts against the host USB source clock →
+periodic FIFO under-/over-run → crackle.
+
+This is **pre-existing and independent of the UAC1→UAC2 migration** (UAC1 crackled identically).
+It is **out of scope** for this migration and recorded as future work — see
+[audio-pipeline.md](../dev-specs/audio-pipeline.md) "KNOWN LIMITATION — drift compensation".
+Fix sketch: capture per-frame arrival timestamp → feed drift comp → APLL tune (nRF5340-only).
+
+> Action item (separate): rebuild + reflash the **nRF7002DK** gateway with the `sof_cb` fix
+> (it was built before the fix and would crash-loop otherwise). The nRF54LM20DK gateway has
+> already been rebuilt (Full-Speed) and HW-confirmed.

@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-25-13-35 |
-| PRD Version | 2026-06-25-13-30 |
+| Version | 2026-06-26-14-24 |
+| PRD Version | 2026-06-26-11-29 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-06-26-14-24 | Documented KNOWN LIMITATION: drift compensation is not wired up in the Wi-Fi path (sdu_ref timestamps commented out) → headset I2S clock drifts → periodic audible crackle. Added the Wi-Fi RX framing resync note. Both are pre-existing (independent of the UAC1→UAC2 migration). |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: square-wave test tone replaces LC3/CMSIS-DSP tone_gen (drops CMSIS_DSP); dual-mode peer resolution (P2P_GC fixed IP vs STA mDNS); P2P Client→P2P_GC |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added peer-address resolution by mode (P2P = fixed IP, STA = mDNS); Opus STA-only constraint documented |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
@@ -133,6 +134,24 @@ stateDiagram-v2
 `hfclkaudio_set()` adjusts the APLL frequency to compensate for clock drift
 between gateway and headset. Guarded with `#if NRF_CLOCK_HAS_HFCLKAUDIO` — on
 nRF54LM20A (no HFCLKAUDIO) this is a no-op.
+
+> **⚠️ KNOWN LIMITATION — drift compensation is NOT wired up in the Wi-Fi path.**
+> The state machine above is inherited from the BLE LE Audio origin, where it was
+> driven by the ISO **SDU reference** timestamp. In the Wi-Fi port,
+> `audio_datapath_stream_out(buf, size)` takes **no** `sdu_ref`/timestamp — the
+> timestamp-capture and `prev_pres_sdu_ref_us` plumbing in `wifi_audio_rx.c` and
+> `audio_datapath_stream_out()` is **commented out**. As a result
+> `prev_drift_sdu_ref_us` stays 0, the state machine never leaves `DRIFT_STATE_INIT`,
+> and the headset's I2S/APLL clock free-runs. Over seconds it drifts against the host
+> USB audio source clock, periodically under-/over-running the output FIFO →
+> **audible crackle every few seconds** (independent of USB class — UAC1 or UAC2).
+>
+> **Fixing it (future work):** capture a per-frame arrival timestamp on the headset
+> (`audio_sync_timer_capture()`), derive a source-rate reference (Wi-Fi jitter must be
+> filtered), feed it as `sdu_ref` to `audio_datapath_stream_out()` → drift comp →
+> `hfclkaudio_set()`. nRF5340-only (the nRF54LM20A has no audio PLL to tune). A related
+> improvement is sending each audio frame as a single UDP datagram (raise the P2P-link
+> MTU so the 1925 B frame fits) to halve per-frame packet-loss exposure.
 
 ---
 
