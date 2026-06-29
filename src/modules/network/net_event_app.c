@@ -29,10 +29,8 @@
 LOG_MODULE_REGISTER(net_event_app, LOG_LEVEL_INF);
 
 /* APP_WIFI_STATE_CHAN is owned by this file. */
-ZBUS_CHAN_DEFINE(APP_WIFI_STATE_CHAN, struct app_wifi_state_msg, NULL, NULL,
-		 ZBUS_OBSERVERS_EMPTY,
-		 ZBUS_MSG_INIT(.state = APP_WIFI_STATE_CONNECTING,
-			       .mode = ZEGO_WIFI_MODE_P2P_GO));
+ZBUS_CHAN_DEFINE(APP_WIFI_STATE_CHAN, struct app_wifi_state_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(.state = APP_WIFI_STATE_CONNECTING, .mode = ZEGO_WIFI_MODE_P2P_GO));
 
 /* ── Internal helper ─────────────────────────────────────────────────────── */
 
@@ -48,10 +46,10 @@ static void pub_wifi_state(enum app_wifi_state state, enum zego_wifi_mode mode)
 
 /* ── Weak hook overrides ─────────────────────────────────────────────────── */
 
-void zego_on_net_event_wifi_connect(enum zego_wifi_mode mode)
-{
-	LOG_INF("L2 connected (mode=%d) — waiting for IP", (int)mode);
-}
+// void zego_on_net_event_wifi_connect(enum zego_wifi_mode mode)
+// {
+// 	LOG_INF("L2 connected (mode=%d) — waiting for IP", (int)mode);
+// }
 
 /**
  * Fired when:
@@ -110,7 +108,7 @@ void zego_on_net_event_wifi_ap_enabled(enum zego_wifi_mode mode, const char *ip_
 	ARG_UNUSED(mode);
 	ARG_UNUSED(ip_addr);
 	ARG_UNUSED(ssid);
-	LOG_INF("AP/P2P_GO enabled — waiting for client");
+	LOG_INF("AP/P2P_GO enabled, waiting for client");
 }
 
 void zego_on_net_event_wifi_ap_sta_connected(int sta_count)
