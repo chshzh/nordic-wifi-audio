@@ -95,9 +95,9 @@ LED 0 begins rotating. Mode-specific connection:
 | | BTN4 (idx 3) | Single click | Trigger test tone |
 | | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
-| nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| nRF7002DK | Button 1 (idx 0) | Single click | Print current Wi-Fi state to UART |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
-| | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
+| | Button 2 (idx 1) | Any | Available (no default audio function — gateway only) |
 | nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
@@ -298,20 +298,6 @@ west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_nrf5340audiodk
 
 Per-role mode visibility (set in the role overlays): the Gateway exposes `sta` + `p2p_go`; the Headset exposes `sta` + `p2p_gc`. The mode-switch banner hint is printed only when more than one mode is compiled in.
 
-#### STA-only (no P2P) — smaller image
-
-Omit the snippet. Only STA mode is compiled in (~63 % flash). Both devices join an AP; mDNS auto-discovery works exactly as in the dual-mode STA path. Store credentials first: `wifi cred add -s <SSID> -p <pass> -k 1`.
-
-```sh
-# STA-only Gateway — nRF5340 Audio DK + nRF7002EK
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_sta_nrf5340audiodk -- \
-  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-gateway.conf"
-
-# STA-only Headset — nRF5340 Audio DK + nRF7002EK only
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_sta_nrf5340audiodk -- \
-  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-headset.conf"
-```
-
 #### Feature Overlay Builds
 
 | Overlay / Option | Purpose |
@@ -322,12 +308,13 @@ west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_sta_nrf5340aud
 
 > **Opus and P2P are mutually exclusive** on nRF5340 Audio DK — Opus is an STA-only (no-snippet) option due to flash limitation. Use one or the other, not both.
 
-**Example — STA Gateway with Opus codec + LINE IN (no P2P snippet):**
+**Example — Opus codec (Gateway + Headset, no P2P snippet):**
 
 ```sh
-west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_opus_linein -- \
-  -DSHIELD=nrf7002ek \
-  -DEXTRA_CONF_FILE="overlay-audio-gateway.conf;overlay-opus.conf;overlay-gateway-linein.conf"
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_gateway_opus_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-gateway.conf;overlay-opus.conf"
+west build -p -b nrf5340_audio_dk/nrf5340/cpuapp -d build_headset_opus_nrf5340audiodk -- \
+  -DSHIELD=nrf7002ek -DEXTRA_CONF_FILE="overlay-audio-headset.conf;overlay-opus.conf"
 ```
 
 ### Flash
