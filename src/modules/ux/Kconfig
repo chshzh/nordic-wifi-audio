@@ -30,6 +30,16 @@ config APP_UX_INIT_PRIORITY
 	  ZEGO_BUTTON_INIT_PRIORITY (90) so LED and button are ready before
 	  the UX module starts ROTATE and registers observers.
 
+config APP_UX_MODE_BUTTON_IDX
+	int "Button index for Wi-Fi mode control (single click + long press)"
+	default 0
+	range 0 8
+	help
+	  Index of the button that prints the Wi-Fi mode (single click) and
+	  cycles the Wi-Fi mode + reboots (long press). Board-specific: the
+	  nRF5340 Audio DK uses BTN5 (idx 4) so idx 0 (VOL-) stays free;
+	  the nRF7002DK and nRF54LM20DK use idx 0 (the default).
+
 config APP_UX_ROTATE_FIRST_LED
 	int "First LED index in the Wi-Fi ROTATE sequence"
 	default 0

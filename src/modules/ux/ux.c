@@ -5,9 +5,10 @@
 
 /**
  * @file ux.c
- * @brief Application UX module — Button 0 gestures and LED 0 Wi-Fi feedback.
+ * @brief Application UX module — mode-button gestures and LED 0 Wi-Fi feedback.
  *
- * Button 0 gesture → action mapping:
+ * Mode-control button (CONFIG_APP_UX_MODE_BUTTON_IDX: idx 4/BTN5 on nRF5340
+ * Audio DK, idx 0 elsewhere) gesture → action mapping:
  *   SINGLE_CLICK  Print current Wi-Fi mode to UART log.
  *   LONG_PRESS    Cycle Wi-Fi mode STA → P2P_GO → P2P_GC → STA,
  *                 save to NVS via settings, reboot.
@@ -188,13 +189,16 @@ static void app_ux_led_work_fn(struct k_work *work)
 
 static K_WORK_DEFINE(app_ux_led_work, app_ux_led_work_fn);
 
-/* ── Button 0 listener ─────────────────────────────────────────────────── */
+/* ── Mode-control button listener ──────────────────────────────────────── */
 
 static void btn_listener_cb(const struct zbus_channel *chan)
 {
 	const struct button_msg *msg = zbus_chan_const_msg(chan);
 
-	if (msg->button_number != 0) {
+	/* Board-specific mode-control button (idx 4/BTN5 on nRF5340 Audio DK so
+	 * VOL- stays free; idx 0 on nRF7002DK / nRF54LM20DK).
+	 */
+	if (msg->button_number != CONFIG_APP_UX_MODE_BUTTON_IDX) {
 		return;
 	}
 
