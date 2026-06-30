@@ -126,6 +126,7 @@ jobs:
           VER: ${{ steps.ver.outputs.VERSION }}
         run: |
           set -o pipefail
+          mkdir -p ${{ matrix.config.build_dir }}
           west build -p -b ${{ matrix.config.board }} -d ${{ matrix.config.build_dir }} -- \
             ${{ matrix.config.shield }} \
             -DEXTRA_CONF_FILE="${{ matrix.config.overlay }}" \
