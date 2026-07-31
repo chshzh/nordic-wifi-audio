@@ -104,6 +104,10 @@ endmenu # I2S
 #------------------------------------------------------------------------#
 menu "Log levels"
 
+module = MODULE_AUDIO_I2S
+module-str = module-audio-i2s
+source "subsys/logging/Kconfig.template.log_config"
+
 module = MODULE_AUDIO_USB
 module-str = module-audio-usb
 source "subsys/logging/Kconfig.template.log_config"

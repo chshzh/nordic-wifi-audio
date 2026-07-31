@@ -11,10 +11,26 @@
 #include <zephyr/drivers/pinctrl.h>
 #include <nrfx_i2s.h>
 #include <nrfx_clock.h>
+#include <hal/nrf_clock.h>
+
+#include <zephyr/logging/log.h>
 
 #include "audio_sync_timer.h"
 
+LOG_MODULE_REGISTER(audio_i2s, CONFIG_MODULE_AUDIO_I2S_LOG_LEVEL);
+
 #define I2S_NL DT_NODELABEL(i2s0)
+
+/* Upper bound on the HFCLKAUDIO PLL lock time; it normally reports started
+ * within a few ms.
+ */
+#define ACLK_START_TIMEOUT_MS 20
+
+/* One I2S block is 1 ms, so the first "next buffers needed" event is at most
+ * that far away; these bounds cover it with margin.
+ */
+#define I2S_NEXT_BUF_RETRIES        200
+#define I2S_NEXT_BUF_RETRY_DELAY_US 10
 
 enum audio_i2s_state {
 	AUDIO_I2S_STATE_UNINIT,
@@ -91,8 +107,34 @@ void audio_i2s_set_next_buf(const uint8_t *tx_buf, uint32_t *rx_buf)
 
 	int ret;
 
-	ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
+	/*
+	 * nrfx_i2s_next_buffers_set() rejects the buffer with -EINPROGRESS until
+	 * the peripheral has raised its first "next buffers needed" event. The
+	 * very first call - made by audio_datapath_i2s_start() immediately after
+	 * nrfx_i2s_start() - can land inside that window, so retry briefly.
+	 *
+	 * Dropping that buffer leaves nrfx single-buffered: the peripheral then
+	 * replays the block it already holds instead of advancing, which is
+	 * audible as a continuous ~1 kHz buzz with no audio. The failure is
+	 * otherwise silent because CONFIG_ASSERT is disabled in this app, so the
+	 * return value is also logged below rather than only asserted on.
+	 *
+	 * Calls from the block-complete callback are always inside the window and
+	 * succeed on the first attempt, so the retry never runs in ISR context.
+	 */
+	for (int i = 0; i < I2S_NEXT_BUF_RETRIES; i++) {
+		ret = nrfx_i2s_next_buffers_set(&i2s_inst, &i2s_buf);
+		if (ret != -EINPROGRESS) {
+			break;
+		}
+		k_busy_wait(I2S_NEXT_BUF_RETRY_DELAY_US);
+	}
+
 	__ASSERT_NO_MSG(ret == 0);
+
+	if (ret != 0) {
+		LOG_ERR("nrfx_i2s_next_buffers_set failed: %d", ret);
+	}
 }
 
 void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
@@ -115,6 +157,10 @@ void audio_i2s_start(const uint8_t *tx_buf, uint32_t *rx_buf)
 	/* Buffer size in 32-bit words */
 	ret = nrfx_i2s_start(&i2s_inst, &i2s_buf, 0);
 	__ASSERT_NO_MSG(ret == 0);
+
+	if (ret != 0) {
+		LOG_ERR("nrfx_i2s_start failed: %d", ret);
+	}
 
 	state = AUDIO_I2S_STATE_STARTED;
 }
@@ -141,11 +187,23 @@ void audio_i2s_init(void)
 
 	nrfx_clock_hfclkaudio_config_set(HFCLKAUDIO_12_288_MHZ);
 
-	NRF_CLOCK->TASKS_HFCLKAUDIOSTART = 1;
+	nrf_clock_event_clear(NRF_CLOCK, NRF_CLOCK_EVENT_HFCLKAUDIOSTARTED);
+	nrf_clock_task_trigger(NRF_CLOCK, NRF_CLOCK_TASK_HFCLKAUDIOSTART);
 
-	/* Wait for ACLK to start */
-	while (!NRF_CLOCK_EVENT_HFCLKAUDIOSTARTED) {
+	/* Wait for ACLK (HFCLKAUDIO PLL) to lock before configuring I2S, which
+	 * derives MCK/LRCK from it. Starting I2S against an unlocked PLL clocks
+	 * the codec at the wrong rate and produces continuous periodic noise.
+	 */
+	for (int i = 0; i < ACLK_START_TIMEOUT_MS; i++) {
+		if (nrf_clock_event_check(NRF_CLOCK, NRF_CLOCK_EVENT_HFCLKAUDIOSTARTED)) {
+			break;
+		}
 		k_sleep(K_MSEC(1));
+	}
+
+	if (!nrf_clock_event_check(NRF_CLOCK, NRF_CLOCK_EVENT_HFCLKAUDIOSTARTED)) {
+		LOG_ERR("HFCLKAUDIO did not start within %d ms - audio will be distorted",
+			ACLK_START_TIMEOUT_MS);
 	}
 
 	ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
@@ -156,6 +214,10 @@ void audio_i2s_init(void)
 
 	ret = nrfx_i2s_init(&i2s_inst, &cfg, i2s_comp_handler);
 	__ASSERT_NO_MSG(ret == 0);
+
+	if (ret != 0) {
+		LOG_ERR("nrfx_i2s_init failed: %d", ret);
+	}
 
 	state = AUDIO_I2S_STATE_IDLE;
 }
