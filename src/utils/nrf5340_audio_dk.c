@@ -12,8 +12,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(nrf5340_audio_dk, CONFIG_MODULE_NRF5340_AUDIO_DK_LOG_LEVEL);
 
-static struct board_version board_rev;
-
 int nrf5340_audio_dk_init(void)
 {
 	int ret;
@@ -21,6 +19,8 @@ int nrf5340_audio_dk_init(void)
 	/* LED and button init removed — zego/led and zego/button bricks initialize via SYS_INIT */
 
 #if IS_ENABLED(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP)
+	struct board_version board_rev;
+
 	ret = board_version_valid_check();
 	if (ret) {
 		return ret;
