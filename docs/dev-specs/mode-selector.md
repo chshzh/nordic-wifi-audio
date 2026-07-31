@@ -5,15 +5,16 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-25-13-35 |
-| PRD Version | 2026-06-25-13-30 |
-| NCS Version | v3.3.0 |
+| Version | 2026-07-31-14-13 |
+| PRD Version | 2026-07-31-14-13 |
+| NCS Version | v3.4.0 |
 | Status | Retired |
 
 ## Changelog
 
 | Version | Summary of changes |
 |---|---|
+| 2026-07-31-14-13 | Trimmed to remove duplication with [zego/bricks/wifi's own spec](../../../zego/bricks/wifi/docs/wifi-spec.md) — generic Kconfig/shell/banner mechanics now live there only. Fixed a stale claim: the mode cycle (`src/modules/ux/ux.c`) persists via `settings_save_one()` + `sys_reboot()` directly, not a `zego_wifi_set_mode_and_reboot()` helper (no such function exists in the current brick). NCS v3.4.0. |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: per-mode ZEGO_WIFI_MODE_*_ENABLED Kconfigs; dual-mode firmware with per-role mode visibility (gateway STA+P2P_GO, headset STA+P2P_GC); banner hint only when >1 mode; P2P Client→P2P_GC rename |
 | 2026-06-22-15-18 | Created as tombstone: custom mode_selector was never implemented; mode persistence is owned by zego/wifi brick |
 
@@ -31,45 +32,30 @@ shell command `zego_wifi_mode`). The custom `mode_selector.c/.h` is retired in S
 
 ## Current Implementation: zego/wifi Brick
 
-Wi-Fi mode selection and NVS persistence are handled by `zego/bricks/wifi`:
+Wi-Fi mode selection and NVS persistence are owned entirely by `zego/bricks/wifi`
+(`CONFIG_ZEGO_WIFI=y`) — see its own spec for the shell command, `WIFI_MODE_CHAN`,
+NVS persistence mechanics, and the full `ZEGO_WIFI_MODE_*_ENABLED` / banner-hint
+Kconfig reference, none of which are restated here:
+[wifi-spec.md](../../../zego/bricks/wifi/docs/wifi-spec.md).
 
-- **Spec**: `zego/bricks/wifi/docs/wifi-spec.md`
-- **Kconfig**: `CONFIG_ZEGO_WIFI=y`, `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO=y` (gateway), `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GC=y` (headset)
-- **Channel**: `WIFI_MODE_CHAN` — published once at `SYS_INIT` (APPLICATION priority 0)
-- **Persistence**: NVS key `app/zego_wifi_mode` via Zephyr Settings subsystem
-- **Shell command**: `zego_wifi_mode [sta|p2p_go|p2p_gc]` (plus `softap` when SoftAP is enabled) — saves the mode to NVS and cold-reboots; the listed options are gated by the `ZEGO_WIFI_MODE_*_ENABLED` symbols
+This section covers only what's specific to this project: which modes each role
+exposes, and the app-layer mode cycle.
 
-### Single Dual-Mode Firmware
-
-The default build (with `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`) compiles in **both** P2P and STA
-support; the active mode is NVS-persisted and runtime-switchable (no separate STA-only vs P2P-only
-firmware). Which modes a given build exposes — in the boot banner and in the `zego_wifi_mode` shell
-command — is gated by per-mode enable Kconfigs in the wifi brick:
-
-| Kconfig | Default | Notes |
-|---|---|---|
-| `CONFIG_ZEGO_WIFI_MODE_STA_ENABLED` | `y` | STA is always available |
-| `CONFIG_ZEGO_WIFI_MODE_P2P_GO_ENABLED` | `y` if `NRF70_P2P_MODE` | Group Owner |
-| `CONFIG_ZEGO_WIFI_MODE_P2P_GC_ENABLED` | `y` if `NRF70_P2P_MODE` | Group Client (renamed from P2P Client) |
-| `CONFIG_ZEGO_WIFI_MODE_SOFTAP_ENABLED` | `y` if `NRF70_AP_MODE && !NRF70_P2P_MODE` | Renamed from `ZEGO_WIFI_SOFTAP_ENABLED` |
-
-**Per-role mode visibility** is set by the role overlays on top of the shared dual-mode firmware:
+**Per-role mode visibility** (role overlays on top of the shared dual-mode firmware):
 
 - **Gateway** overlay sets `CONFIG_ZEGO_WIFI_MODE_P2P_GC_ENABLED=n` → exposes **STA + P2P_GO**.
 - **Headset** overlay sets `CONFIG_ZEGO_WIFI_MODE_P2P_GO_ENABLED=n` → exposes **STA + P2P_GC**.
 
-**Banner mode-switch hint**: the boot banner prints the mode-switch hint only when more than one
-mode is compiled in. This is a compile-time `_ZEGO_WIFI_MODE_COUNT > 1` guard that sums `IS_ENABLED`
-over the four `MODE_*_ENABLED` symbols; a single-mode build prints no hint.
-
 ### Mode Cycle (App-Layer, not Brick)
 
-The application's `ux.c` module implements the Button 0 long-press mode cycle:
+`src/modules/ux/ux.c` overrides `zego_ux_on_long_press()` (a `zego/bricks/ux` weak hook —
+see [ui-module.md](ui-module.md)) to implement the button long-press mode cycle:
 
-`STA → P2P_GO → P2P_GC → STA`
+`STA → P2P_GO → P2P_GC → STA` (SoftAP excluded — see [ui-module.md](ui-module.md))
 
-Mode is saved via `zego_wifi_set_mode_and_reboot()` (provided by the wifi brick).
-See `docs/dev-specs/ui-module.md` for the ux module spec.
+Mode is persisted directly via `settings_save_one("app/zego_wifi_mode", ...)` followed by
+`sys_reboot(SYS_REBOOT_COLD)` — there is no `zego_wifi_set_mode_and_reboot()` helper in the
+current brick.
 
 ### Default Modes
 

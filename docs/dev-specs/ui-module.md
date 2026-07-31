@@ -1,189 +1,95 @@
-# UI Module Spec — App UX Module (Buttons, LEDs)
+# UI Module Spec — zego/bricks/ux Gesture Override
 
 ## Document Information
 
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-22-15-18 |
-| PRD Version | 2026-06-22-15-18 |
-| NCS Version | v3.3.0 |
+| Version | 2026-07-31-14-13 |
+| PRD Version | 2026-07-31-14-13 |
+| NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
-| Status | In Review |
+| Status | Implemented — long-press override only (everything else owned by `zego/bricks/ux`) |
 
 ## Changelog
 
 | Version | Summary of changes |
 |---|---|
+| 2026-07-31-14-13 | **Rewrite for the NCS v3.4.0 migration — not a duplicate of `zego/bricks/ux`'s own spec.** `zego/bricks/ux` (zego v3.4.0.2) now owns button gesture dispatch, the LED 0 Wi-Fi state machine, and the startup banner outright — all previously app-owned in `src/modules/ux/ux.c`. This app keeps exactly one strong override, `zego_ux_on_long_press()`, because the brick's default long-press cycle includes SoftAP and this project deliberately excludes it (P2P_GO already covers the zero-infrastructure role). Full generic behavior (LED state diagram, Kconfig reference, banner mechanics, single-click, double-click) is documented once in [zego/bricks/ux/docs/ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) and not restated here. |
 | 2026-06-22-15-18 | Rewrite: app ux module replaces custom button_handler.c + led.c; zego bricks own hardware; mode cycle updated (STA→P2P_GO→P2P_GC, no SoftAP) |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
 
 ---
 
-## Overview
+## Current state
 
-The UI module is split into two layers:
+Button gestures, the LED 0 Wi-Fi state machine, and the startup banner
+(`zego_ux_print_banner()`, called once from `main()`) are owned entirely by
+`zego/bricks/ux` (`CONFIG_ZEGO_UX=y`) — see its own spec for the full mechanism:
+[ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md).
 
-| Layer | Owned by | Role |
-|---|---|---|
-| Hardware | zego/button brick (`BUTTON_CHAN`) | GPIO debounce, gesture classification (SINGLE_CLICK, LONG_PRESS) |
-| Hardware | zego/led brick (`LED_CMD_CHAN`) | LED state machine, animations (ROTATE, BLINK, ON, BREATHE) |
-| Policy | `src/modules/ux/ux.c` (app) | Button gesture → mode action; APP_WIFI_STATE_CHAN → LED command |
+`src/modules/network/net_event_app.c` publishes `ZEGO_UX_WIFI_STATE_CHAN` on
+connectivity changes to drive the brick's LED state machine — see
+[network-module.md](network-module.md) for those hooks.
 
-Custom `src/modules/button_handler.c` and `src/modules/led.c` are retired in Step 3.5.
-Channel assignment (`src/utils/channel_assignment.c`) is kept for I2S audio channel selection.
+Custom `src/modules/button_handler.c` and `src/modules/led.c` were retired in Step 3.5
+(pre-v3.4.0). The transition-proxy headers `src/modules/ux/{Kconfig,button.h,led.h,wifi.h}`
+that briefly stood in for the zego headers during that step were deleted in the v3.4.0
+migration (OI-008, resolved) — `ux.c` now includes the zego headers directly.
+Channel assignment (`src/utils/channel_assignment.c`) is unrelated to this module and
+kept for I2S audio channel selection.
 
----
-
-## File Locations (after refactor)
+### File locations (after v3.4.0 migration)
 
 ```
 src/modules/ux/
-├── ux.c          — button gesture handler + LED state machine
-├── Kconfig       — CONFIG_APP_UX_MODULE, LED index config
+├── ux.c          — single override: zego_ux_on_long_press() (mode cycle)
 └── CMakeLists.txt
-src/utils/
-└── channel_assignment.c/h  — L/R/GW audio channel selection (kept, audio domain)
 ```
+
+`ux.c` is built as its **own `zephyr_library_named(app_ux)`**, not compiled directly
+into `app`. This is a header-resolution workaround, not a design choice: the app's own
+private include path puts `src/modules` (which still holds the legacy nRF5340 Audio DK
+`led.h`, used elsewhere for on-board hardware LED color constants) ahead of the zego
+brick's `<led.h>`/`<ux.h>`. A separate library sees only the global brick include
+directories, so the angle-bracket includes resolve to the zego headers. See
+`src/modules/ux/CMakeLists.txt` for the full rationale, including the
+`add_dependencies(app_ux zephyr_generated_headers)` needed because Zephyr only wires
+that dependency up automatically for libraries registered before `find_package(Zephyr)`
+returns.
 
 ---
 
-## Button 0 Gesture Mapping
+## The one override: `zego_ux_on_long_press()`
 
-The ux module subscribes to `BUTTON_CHAN` (zego/button brick). Button 0 (`sw0`) is the
-dedicated mode/state button:
+The mode-control button (`CONFIG_ZEGO_UX_BUTTON_IDX` — index 4/BTN5 on nRF5340 Audio DK
+so VOL− stays free; index 0 on nRF7002DK/nRF54LM20DK) carries three gestures. Only
+long-press is overridden — single-click and double-click keep the brick defaults:
 
-| Gesture | Action |
-|---|---|
-| `SINGLE_CLICK` | Print current Wi-Fi mode to UART (no reboot, informational only) |
-| `LONG_PRESS` (≥ 3 s) | Cycle Wi-Fi mode → save to NVS → reboot into new mode |
-
-Mode cycle order: **STA → P2P_GO → P2P_GC → STA** (wraps around; no SoftAP).
-
-Audio-domain buttons (volume up/down, play/pause) remain on the legacy `button_chan`
-path through `button_msg_sub_thread` in main.c until Step 3.5 fully consolidates.
-
----
-
-## LED State Machine
-
-The ux module subscribes to `APP_WIFI_STATE_CHAN` (published by `net_event_app.c`) and
-translates states into `LED_CMD_CHAN` commands to the zego/led brick.
-
-The ux module targets **LED index 0** (or `CONFIG_APP_UX_WIFI_LED_IDX`) as the
-Wi-Fi status LED.
-
-```
-stateDiagram-v2
-    [*] --> ROTATE : SYS_INIT (app_ux_ready = true)
-
-    ROTATE : LED 0 ROTATE animation
-    ROTATE --> ON : APP_WIFI_STATE_CONNECTED
-    ROTATE --> BLINK_FAST : APP_WIFI_STATE_ERROR
-
-    ON : LED 0 solid ON
-    ON --> ROTATE : APP_WIFI_STATE_CONNECTING
-    ON --> BLINK_FAST : APP_WIFI_STATE_ERROR
-
-    BLINK_FAST : LED 0 fast blink (100 ms half-period)
-    BLINK_FAST --> ROTATE : APP_WIFI_STATE_CONNECTING
-    BLINK_FAST --> ON : APP_WIFI_STATE_CONNECTED
-```
-
-LED commands published on `LED_CMD_CHAN`:
-- `ROTATE`: Wi-Fi connecting / scanning / waiting for P2P peer
-- `ON` (solid): Connected and audio link active
-- `BLINK` (fast): Error / disconnected unexpectedly
-
----
-
-## Mode Cycle Implementation
+| Gesture | zego/ux default | This app's behavior | Resolution |
+|---|---|---|---|
+| Single-click | Log current Wi-Fi mode | *(same)* | **Not overridden** — kept at zego/ux default |
+| Double-click | P2P modes: trigger WPS PBC pairing (FR-013, see [network-module.md](network-module.md#p2p-pairing-flow-fr-013)); else: BLE-prov toggle | *(same — BLE prov not enabled, so effectively a no-op outside P2P)* | **Not overridden** — kept at zego/ux default |
+| Long-press (≥ 3 s) | Cycle STA→SoftAP→P2P_GO→P2P_GC→STA, save to NVS, reboot | Cycle **STA→P2P_GO→P2P_GC→STA** (SoftAP excluded) | **Overridden** |
 
 ```c
-/* src/modules/ux/ux.c — long-press handler */
-static void cycle_wifi_mode(void)
+/* src/modules/ux/ux.c — the project's only strong override */
+void zego_ux_on_long_press(void)
 {
-    enum zego_wifi_mode current;
-    zbus_chan_read(&WIFI_MODE_CHAN, &current, K_MSEC(10));
+    /* SoftAP deliberately excluded: P2P_GO provides the zero-infrastructure AP. */
+    static const enum zego_wifi_mode mode_cycle[] = {
+        ZEGO_WIFI_MODE_STA, ZEGO_WIFI_MODE_P2P_GO, ZEGO_WIFI_MODE_P2P_GC,
+    };
+    /* ... find current mode in mode_cycle[], advance to next ... */
 
-    enum zego_wifi_mode next;
-    switch (current) {
-    case ZEGO_WIFI_MODE_STA:       next = ZEGO_WIFI_MODE_P2P_GO;     break;
-    case ZEGO_WIFI_MODE_P2P_GO:    next = ZEGO_WIFI_MODE_P2P_GC; break;
-    case ZEGO_WIFI_MODE_P2P_GC:next = ZEGO_WIFI_MODE_STA;        break;
-    default:                       next = ZEGO_WIFI_MODE_P2P_GO;     break;
-    }
-
-    LOG_INF("Mode cycle: %s → %s",
-            zego_wifi_mode_str(current), zego_wifi_mode_str(next));
-
-    /* zego/wifi brick provides this API to save + reboot */
-    zego_wifi_set_mode_and_reboot(next);
+    settings_save_one("app/zego_wifi_mode", &(uint8_t){next}, sizeof(uint8_t));
+    sys_reboot(SYS_REBOOT_COLD);
 }
 ```
 
----
-
-## Race Condition Handling
-
-Zbus `APP_WIFI_STATE_CHAN` events can arrive before ux.c finishes its `SYS_INIT`
-callback. The ux module uses an atomic `app_ux_ready` flag (set at end of
-`SYS_INIT`) and defers LED work to the system workqueue via `k_work_schedule`.
-State events that arrive before `app_ux_ready` are replayed once the flag is set.
-
----
-
-## Zbus Integration
-
-| Channel | Direction | Notes |
-|---|---|---|
-| `BUTTON_CHAN` | Subscribe | Gestures from zego/button brick (SINGLE_CLICK, LONG_PRESS) |
-| `WIFI_MODE_CHAN` | Read | Read once at SINGLE_CLICK to print mode; read in mode cycle |
-| `APP_WIFI_STATE_CHAN` | Subscribe | Published by net_event_app.c; drives LED state machine |
-| `LED_CMD_CHAN` | Publish | LED commands to zego/led brick |
-
----
-
-## Kconfig Flags
-
-| Symbol | Description | Default |
-|---|---|---|
-| `CONFIG_APP_UX_MODULE` | Enable the app ux module | y |
-| `CONFIG_APP_UX_INIT_PRIORITY` | SYS_INIT APPLICATION priority | 0 |
-| `CONFIG_APP_UX_WIFI_LED_IDX` | LED index for Wi-Fi status (0 = first LED) | 0 |
-| `CONFIG_ZEGO_BUTTON_LONG_PRESS_MS` | Long-press threshold for mode cycle | 3000 |
-| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO` | Gateway default: P2P_GO | y |
-| `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GC` | Headset default: P2P_GC | y |
-
-Per-board button/LED counts set in `boards/*.conf`:
-
-| Board | `CONFIG_ZEGO_BUTTON_NUM_BUTTONS` | `CONFIG_ZEGO_LED_NUM_LEDS` |
-|---|---|---|
-| nRF5340 Audio DK | 5 (sw0–sw4) | 9 (RGB1: 0–2, RGB2: 3–5, mono: 6–8) |
-| nRF7002DK | 2 (sw0–sw1) | 2 |
-| nRF54LM20DK | 3 (sw0–sw2; sw3 removed by shield) | 4 |
-
----
-
-## Channel Assignment (kept)
-
-`src/utils/channel_assignment.c` remains for audio I2S channel selection (L/R/GW).
-It is not affected by the UI module refactor.
-
-```c
-void channel_assignment_get(enum audio_channel *channel);
-void channel_assignment_set(enum audio_channel channel);  /* runtime mode only */
-```
-
----
-
-## Error Handling
-
-| Condition | Handling |
-|---|---|
-| Zbus publish to `LED_CMD_CHAN` fails | `LOG_WRN`, LED state not updated; not fatal |
-| `WIFI_MODE_CHAN` read timeout | `LOG_WRN`, mode cycle uses current WIFI_MODE_CHAN value (stale but safe) |
-| `zego_wifi_set_mode_and_reboot` fails | `LOG_ERR`, no reboot; user must try again |
+`zego_wifi_get_mode()` and the NVS settings key (`app/zego_wifi_mode`) are unchanged
+from before the migration — only the surrounding button/LED/banner plumbing moved into
+the brick.
 
 ---
 
@@ -191,8 +97,7 @@ void channel_assignment_set(enum audio_channel channel);  /* runtime mode only *
 
 | UART log string | Expected condition |
 |---|---|
-| `[ux] Mode: P2P_GO` (on single-click) | Mode print on Button 0 single-click |
-| `[ux] Mode cycle: P2P_GO → P2P_GC` | Long-press mode cycle executed |
-| `[ux] LED → ROTATE` | APP_WIFI_STATE_CONNECTING received |
-| `[ux] LED → ON` | APP_WIFI_STATE_CONNECTED received |
-| `[ux] LED → BLINK` | APP_WIFI_STATE_ERROR received |
+| `Mode cycle: p2p_go -> p2p_gc - saving and rebooting` | Long-press mode cycle executed (app override) |
+
+See [ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) for single-click, double-click,
+and LED test points — this app does not override those.

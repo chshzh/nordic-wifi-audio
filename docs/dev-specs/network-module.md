@@ -5,9 +5,9 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-25-13-35 |
-| PRD Version | 2026-06-25-13-30 |
-| NCS Version | v3.3.0 |
+| Version | 2026-07-31-14-13 |
+| PRD Version | 2026-07-31-14-13 |
+| NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
 
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-07-31-14-13 | Updated to PRD v2026-07-31-14-13 (NCS v3.4.0 / zego v3.4.0.2): `net_event_app.c` now publishes `ZEGO_UX_WIFI_STATE_CHAN` (brick-owned) instead of the app-owned `APP_WIFI_STATE_CHAN`, which no longer exists; `zego_on_net_event_wifi_disconnect()` gained a `bool will_retry` param (ignored — any disconnect still shows ERROR). Removed `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC` (dropped by zego); added the FR-013 runtime WPS PBC pairing flow — see new "P2P Pairing Flow" section. |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: dual-mode firmware; P2P_GO DHCP server needs NET_MAX_CONN/CONTEXTS=8; P2P_GC auto-connect by exact GO MAC (not OUI); STA mDNS discovery via MDNS_RESPONDER (gateway) + MDNS_RESOLVER/DNS_SERVER_IP_ADDRESSES (headset); _nrfwifiaudio._udp.local service |
 | 2026-06-22-15-18 | Rewrite: zego-network consumption pattern replaces semaphore-based design; weak hooks documented; P2P peer resolution added; SoftAP mode retired |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
@@ -33,7 +34,7 @@ The network module has two parts:
 
 | File | Role |
 |---|---|
-| `src/modules/network/net_event_app.c` | Strong overrides of zego/network weak hooks → audio start/stop + `APP_WIFI_STATE_CHAN` |
+| `src/modules/network/net_event_app.c` | Strong overrides of zego/network weak hooks → audio start/stop + `ZEGO_UX_WIFI_STATE_CHAN` (owned by `zego/bricks/ux`, see [ui-module.md](ui-module.md)) |
 | `src/modules/network/socket_utils.c` | UDP socket lifecycle, TX/RX thread, mode-branched peer resolution (STA mDNS / P2P fixed IP) |
 
 The `zego/network` brick owns all Wi-Fi lifecycle (WPA supplicant sequencing,
@@ -68,18 +69,17 @@ in `src/modules/network/net_event_app.c`:
 
 ## Hook Implementation Pattern
 
+`ZEGO_UX_WIFI_STATE_CHAN` and `struct zego_ux_wifi_state_msg` are declared by
+`zego/bricks/ux` (`<ux.h>`), not this file — see [ui-module.md](ui-module.md). This
+file only publishes to it.
+
 ```c
 /* src/modules/network/net_event_app.c */
 
-/* Channel definition — owned by this file */
-ZBUS_CHAN_DEFINE(APP_WIFI_STATE_CHAN, struct app_wifi_state_msg,
-    NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-    ZBUS_MSG_INIT(.state = APP_WIFI_STATE_CONNECTING, .mode = ZEGO_WIFI_MODE_P2P_GO));
-
 /* Called by zego/network when STA gets DHCP lease, OR P2P_GC gets static IP */
 void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode,
-                                   const struct in_addr *ip,
-                                   const uint8_t *mac,
+                                   const char *ip_addr,
+                                   const char *mac_addr,
                                    const char *ssid)
 {
     LOG_INF("Connected (%s) — starting audio", zego_wifi_mode_str(mode));
@@ -88,12 +88,12 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode,
     audio_system_encoder_start();           /* gateway: encode + transmit */
     /* wifi_audio_rx already init'd in main(); socket ready after target set */
 
-    /* Notify ux module */
-    struct app_wifi_state_msg msg = {
-        .state = APP_WIFI_STATE_CONNECTED,
+    /* Notify zego/bricks/ux (drives LED 0) */
+    struct zego_ux_wifi_state_msg msg = {
+        .state = ZEGO_UX_WIFI_STATE_CONNECTED,
         .mode  = mode,
     };
-    zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+    zbus_chan_pub(&ZEGO_UX_WIFI_STATE_CHAN, &msg, K_MSEC(10));
 
     /* Set peer address for socket transport (mode-branched — see socket_utils spec) */
     if (mode == ZEGO_WIFI_MODE_P2P_GC) {
@@ -105,20 +105,22 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode,
     /* STA mode: headset uses mDNS discovery (existing path in socket_utils) */
 }
 
-void zego_on_net_event_wifi_disconnect(void)
+/* will_retry (added in zego v3.4.0.2) is ignored: any disconnect tears the audio
+ * stream down, so the LED shows ERROR regardless of whether the Wi-Fi stack will
+ * keep retrying on its own. */
+void zego_on_net_event_wifi_disconnect(bool will_retry)
 {
+    ARG_UNUSED(will_retry);
     LOG_INF("Disconnected — stopping audio");
     audio_system_encoder_stop();
-    struct app_wifi_state_msg msg = {
-        .state = APP_WIFI_STATE_ERROR,
+    struct zego_ux_wifi_state_msg msg = {
+        .state = ZEGO_UX_WIFI_STATE_ERROR,
     };
-    zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+    zbus_chan_pub(&ZEGO_UX_WIFI_STATE_CHAN, &msg, K_MSEC(10));
 }
 
 /* P2P_GO: subsequent clients (audio already started by dhcp_bound on first) */
-void zego_on_net_event_wifi_ap_sta_connected(int station_count,
-                                              const struct in_addr *ip,
-                                              const uint8_t *mac)
+void zego_on_net_event_wifi_ap_sta_connected(int station_count)
 {
     LOG_INF("P2P client connected (%d total)", station_count);
     /* dhcp_bound handles audio start on first client; nothing more needed here */
@@ -130,10 +132,10 @@ void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
     if (station_count == 0) {
         LOG_INF("All P2P clients gone — stopping audio");
         audio_system_encoder_stop();
-        struct app_wifi_state_msg msg = {
-            .state = APP_WIFI_STATE_ERROR,
+        struct zego_ux_wifi_state_msg msg = {
+            .state = ZEGO_UX_WIFI_STATE_ERROR,
         };
-        zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+        zbus_chan_pub(&ZEGO_UX_WIFI_STATE_CHAN, &msg, K_MSEC(10));
     }
 }
 ```
@@ -174,6 +176,32 @@ the hook) or for a direct call to `socket_utils_set_target_ipv4()`.
 mDNS discovery is **STA-only** and requires NO hardcoded gateway IP. In P2P mode,
 mDNS multicast is not used over the P2P link; the fixed IP pair is the correct approach.
 
+---
+
+## P2P Pairing Flow (FR-013)
+
+Prior to the v3.4.0 migration, the Headset (P2P_GC) auto-connected to a Gateway MAC
+pinned at build time (`CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`). zego v3.4.0.2 removed
+that Kconfig in favor of runtime WPS PBC pairing, owned entirely by `zego/bricks/wifi`
+and `zego/bricks/ux` — this app makes no code changes to support it, only drops the
+now-nonexistent Kconfig from `overlay-audio-headset.conf`.
+
+| Step | What happens |
+|---|---|
+| 1. Fresh flash / no saved GO | Headset boots idle in P2P_GC — no auto-connect attempt, no saved Gateway |
+| 2. User double-clicks the mode button (on either device, in a P2P mode) | Brick default `zego_ux_on_double_click()` calls `wifi_p2p_start_pairing()` — see [ui-module.md](ui-module.md) |
+| 3. Discovery + join | Headset runs P2P discovery, joins the pairing-window Gateway via WPS PBC |
+| 4. Persist | Learned Gateway MAC saved to NVS, settings key `net/p2p_gc_go_mac` (in the network brick's own `"net"` subtree, distinct from the mode selector's `"app"` subtree) |
+| 5. Later boots / reconnects | Headset loads the saved MAC from NVS and reconnects automatically — no re-pairing needed unless a different Gateway is desired |
+
+This app's only observable interaction with the flow is that `zego_on_net_event_dhcp_bound()`
+still fires exactly as before once the P2P link comes up (see Hook Implementation Pattern
+above) — pairing vs. reconnect-from-NVS is transparent to the audio start logic.
+
+For the full pairing state machine (WPS PBC method choice, re-entrancy guard,
+GO-capability peer filtering) — owned by `zego/bricks/network`'s `wifi_p2p_start_pairing()`
+— see [zego/bricks/network/docs/network-spec.md](../../../zego/bricks/network/docs/network-spec.md).
+
 ### STA mDNS auto-discovery
 
 The headset finds the gateway with no hardcoded IP, in STA (infrastructure) mode:
@@ -200,7 +228,7 @@ The headset finds the gateway with no hardcoded IP, in STA (infrastructure) mode
 
 | Channel | Direction | Notes |
 |---|---|---|
-| `APP_WIFI_STATE_CHAN` | Publish | Published in each hook; subscribers: ux.c (LED) |
+| `ZEGO_UX_WIFI_STATE_CHAN` | Publish | Declared by `zego/bricks/ux` (not this file); published in each hook; drives the brick's LED 0 state machine — see [ui-module.md](ui-module.md) |
 
 ---
 
@@ -223,7 +251,6 @@ The headset finds the gateway with no hardcoded IP, in STA (infrastructure) mode
 | `CONFIG_ZEGO_WIFI_MODE_P2P_GC_ENABLED` | Expose P2P_GC mode on this role | n gateway / y headset |
 | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GO` | Default mode: P2P_GO (gateway) | y (gateway overlay) |
 | `CONFIG_ZEGO_WIFI_DEFAULT_MODE_P2P_GC` | Default mode: P2P_GC (headset) | y (headset overlay) |
-| `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC` | **Full** GO MAC for P2P_GC auto-connect (NOT an OUI prefix). The brick does a direct BSS scan + associate by exact MAC, because an autonomous P2P_GO beacons but never enters P2P listen state, so prefix-based `P2P_FIND` discovery returns 0 peers. Set to the gateway's actual MAC. | `F4:CE:36:00:15:F2` (example) |
 | `CONFIG_NET_DHCPV4_SERVER` | P2P_GO runs a Zephyr DHCPv4 server, assigning 192.168.7.2 to the client (gateway static IP 192.168.7.1) | y (gateway overlay) |
 | `CONFIG_NET_DHCPV4_SERVER_ADDR_COUNT` | DHCP server address-pool size | 3 (gateway overlay) |
 | `CONFIG_NET_MAX_CONN` / `CONFIG_NET_MAX_CONTEXTS` | **Must be 8** (defaults 4/6). The mDNS + hostap + app sockets exhaust the connection table, so the P2P_GO DHCP server's port-67 bind fails with `-ENOENT` (`net_conn: Not enough connection contexts`) and the client never gets an IP | 8 (prj.conf) |
@@ -234,10 +261,9 @@ The headset finds the gateway with no hardcoded IP, in STA (infrastructure) mode
 
 ### `net_event_app.c` (app-owned)
 ```c
-/* Zbus channel — defined here, declared extern in messages.h */
-extern const struct zbus_channel APP_WIFI_STATE_CHAN;
-
-/* No public functions — all interaction is via weak hooks and the zbus channel */
+/* No channel definitions or public functions of its own — all interaction is via
+ * zego/network's weak hooks (overridden here) and zego/bricks/ux's
+ * ZEGO_UX_WIFI_STATE_CHAN (declared in <ux.h>, published here). */
 ```
 
 ### `socket_utils.h` (kept)
@@ -262,7 +288,7 @@ void socket_utils_set_target_ready_callback(socket_utils_target_ready_cb_t cb);
 | Brick gap: hook not fired for P2P_GC | Escalate as separate decision; do not inline |
 | Socket create failure | `LOG_ERR`, sleep 1 s, retry loop |
 | RX error (`len == -1`) | `LOG_ERR`, close + reconnect |
-| Wi-Fi disconnect (STA) | `zego_on_net_event_wifi_disconnect()` called → audio stops; APP_WIFI_STATE_CHAN → ERROR |
+| Wi-Fi disconnect (STA) | `zego_on_net_event_wifi_disconnect()` called → audio stops; ZEGO_UX_WIFI_STATE_CHAN → ERROR |
 
 ---
 

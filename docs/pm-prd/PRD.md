@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-06-26-11-29 |
-| NCS Version | v3.3.0 |
+| Version | 2026-07-31-14-13 |
+| NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
 
@@ -18,6 +18,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-07-31-14-13 | Migrated to NCS v3.4.0 (from v3.3.0); adopted zego v3.4.0.2's `zego/bricks/ux` (button gestures, LED state machine, and startup banner now brick-owned — replaces the local ux module). P2P_GC pairing changed from a compile-time gateway MAC (`CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`, removed by zego) to runtime pairing: a fresh Headset boots idle in P2P_GC, a **double-click** on the mode button runs WPS PBC discovery and joins the pairing Gateway, and the learned MAC persists to NVS for automatic reconnect on later boots/power cycles. Added FR-013 for this pairing gesture; updated FR-004 and FR-006 to match. No change to audio transport, latency, or board support. |
 | 2026-06-26-11-29 | HW-validation correction: nRF54LM20DK runs UAC2 at **Full-Speed**, not High-Speed — HS enumeration broke the USB audio stream on macOS hosts (iso-OUT continuously cancelled). All boards now UAC2 @ Full-Speed; the per-board lower-latency HS benefit noted in the 09-55 entry does not apply and is deferred to future work. |
 | 2026-06-26-09-55 | Migrate USB audio source from USB Audio Class 1.0 (legacy stack) to UAC2 (USB Audio Class 2.0, USBD-next stack) on all boards. UAC2 enables explicit feedback (prevents long-term sample drift) and, on nRF54LM20DK, High-Speed enumeration (125 µs vs 1 ms service interval) for lower USB-side latency. Host-compatibility caveat: UAC2 is class-native on Windows 10+, macOS, and Linux; pre-Windows-10 hosts (which UAC1 supported driver-free) are no longer covered. |
 | 2026-06-25-13-30 | Reverse the "separate binaries" decision: single dual-mode firmware (default build, with wifi-p2p snippet) now supports both P2P and STA-with-mDNS, runtime-switchable. Enabled by switching to picolibc (−~15 KB flash/−~14 KB RAM) and replacing the LC3/CMSIS-DSP test-tone with a local square-wave. Renamed P2P Client → P2P_GC (Group Client) throughout. Per-role mode visibility (Gateway: STA+P2P_GO, Headset: STA+P2P_GC). Verified on HW: P2P auto-connect+stream and STA mDNS auto-discovery+stream both working. |
@@ -62,7 +63,7 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 | # | Assumption | Risk if wrong |
 |---|---|---|
 | A1 | nRF5340 Audio DK is the primary development and validation board for both gateway and headset roles | High — other boards support gateway role only |
-| A2 | User has NCS v3.3.0 installed | High — API differences in other versions may break the build |
+| A2 | User has NCS v3.4.0 installed | High — API differences in other versions may break the build |
 | A3 | Wi-Fi Direct (P2P) is not blocked by the test environment | Medium — some enterprise environments restrict P2P; STA mode is the fallback |
 | A4 | Opus + P2P is out of scope on nRF5340 (1 MB flash); Opus is an STA-only build option | Low — constraint is architectural |
 | A5 | P2P and STA-with-mDNS coexist in a single dual-mode firmware (default build) | Low — fits ~99% of 1 MB flash after switching to picolibc and removing the LC3/CMSIS-DSP test-tone path |
@@ -74,7 +75,7 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 ### 2.1 Wi-Fi Connectivity
 
 - **Single dual-mode firmware (default build):** One image supports both Wi-Fi Direct P2P and infrastructure STA; the active mode is stored in NVS and switchable at runtime (shell command or Button 0 long-press). Built with `-Dnordic-wifi-audio_SNIPPET=wifi-p2p`. A smaller STA-only image (no snippet) is available when P2P is not needed.
-- **P2P mode (Wi-Fi Direct, default on fresh flash):** Gateway is the Group Owner (P2P_GO); Headset is the Group Client (P2P_GC) and auto-connects by the GO's device MAC within 60 seconds. Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset), served by the GO's DHCP server. No router required.
+- **P2P mode (Wi-Fi Direct, default on fresh flash):** Gateway is the Group Owner (P2P_GO); Headset is the Group Client (P2P_GC). A fresh Headset boots idle (no gateway pinned at build time) — a **double-click** on the mode button triggers WPS PBC discovery and pairing with the Gateway; the learned MAC is persisted to NVS, so subsequent boots and reconnects are automatic with no further pairing step (see FR-013). Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset), served by the GO's DHCP server. No router required.
 - **STA mode (infrastructure Wi-Fi):** Both devices join an existing Wi-Fi network. The Gateway advertises an audio service via mDNS DNS-SD; the Headset discovers the Gateway's DHCP-assigned IP automatically via a DNS-SD PTR→SRV→A query — no hardcoded address. Credentials stored in NVS.
 - **Per-role mode availability:** Gateway exposes STA + P2P_GO; Headset exposes STA + P2P_GC.
 
@@ -105,11 +106,14 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 | | PLAY/PAUSE (idx 2) | Single click | Play / Pause audio stream |
 | | BTN4 (idx 3) | Single click | Trigger test tone |
 | | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
+| | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
 | nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
+| | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
 | | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
 
@@ -171,16 +175,17 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 | FR-001 | developer | stream encoded audio from a Gateway to a Headset over Wi-Fi | I can evaluate latency and quality of Wi-Fi audio on Nordic hardware | Audio frames transmitted with < 200 ms end-to-end latency; start/end byte framing ensures frame integrity; no audible glitching under normal 2.4/5 GHz for ≥ 60 s continuous | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
 | FR-002 | developer | evaluate audio quality with PCM (default) or Opus (overlay, STA only) | I can choose the right bitrate/complexity trade-off for my product | Default build uses raw PCM in P2P and STA modes; Opus enabled via `overlay-opus.conf` in STA mode only; Opus encodes at 6–320 kbps; P2P + Opus is explicitly out of scope (nRF5340 flash constraint) | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
 | FR-003 | user | have each device operate in a defined Gateway or Headset role | the demo setup is unambiguous | Gateway = UDP server, captures and encodes audio; Headset = UDP client, receives and plays; role selected at build time via `overlay-audio-gateway.conf` / `overlay-audio-headset.conf` | [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
-| FR-004 | developer | have Gateway and Headset connect directly via Wi-Fi Direct (P2P) without a router | the demo works in any environment without infrastructure | Gateway starts as P2P Group Owner (P2P_GO); Headset (P2P_GC) auto-connects to the GO's exact device MAC and connects within 60 s; GO runs a DHCP server assigning static IP 192.168.7.1/7.2; P2P is the default mode on first boot | [network-module.md](../dev-specs/network-module.md), [mode-selector.md](../dev-specs/mode-selector.md) |
+| FR-004 | developer | have Gateway and Headset connect directly via Wi-Fi Direct (P2P) without a router | the demo works in any environment without infrastructure | Gateway starts as P2P Group Owner (P2P_GO); Headset (P2P_GC) pairs with the GO via the double-click gesture (see FR-013), then connects within 60 s; GO runs a DHCP server assigning static IP 192.168.7.1/7.2; P2P is the default mode on first boot | [network-module.md](../dev-specs/network-module.md), [mode-selector.md](../dev-specs/mode-selector.md) |
+| FR-013 | user | pair a fresh Headset with its Gateway without reflashing or a hardcoded MAC | the same Headset image works with any Gateway, and re-pairing is a physical action, not a rebuild | Headset (P2P_GC) boots idle with no saved Gateway; double-click on the mode button runs WPS PBC discovery and joins the pairing-window Gateway (P2P_GO); the learned Gateway MAC persists to NVS and is used automatically on later boots and reconnects — no re-pairing needed unless a different Gateway is desired | [network-module.md](../dev-specs/network-module.md), [ui-module.md](../dev-specs/ui-module.md) |
 | FR-009 | developer | use the onboard CS47L63 codec and 3.5 mm jack on nRF5340 Audio DK | the demo works with standard headphones | I2S PCM flows between nRF5340 and CS47L63; volume adjustable via codec registers; I2S path auto-disabled on boards without hardware codec | [board-init-module.md](../dev-specs/board-init-module.md) |
-| FR-010 | developer | build the same codebase for all supported hardware platforms | the demo can be demonstrated on different Nordic boards | P0: nRF5340 Audio DK gateway + headset (I2S audio); P1 gateway-only: nRF7002DK and nRF54LM20DK + nRF7002EB2 (build verified NCS v3.3.0); per-board DTS overlay and Kconfig; zero compiler errors from single `src/` tree | [board-init-module.md](../dev-specs/board-init-module.md) |
+| FR-010 | developer | build the same codebase for all supported hardware platforms | the demo can be demonstrated on different Nordic boards | P0: nRF5340 Audio DK gateway + headset (I2S audio); P1 gateway-only: nRF7002DK and nRF54LM20DK + nRF7002EB2 (build verified NCS v3.4.0); per-board DTS overlay and Kconfig; zero compiler errors from single `src/` tree | [board-init-module.md](../dev-specs/board-init-module.md) |
 
 ### P1 — Should Have
 
 | ID | As a… | I want to… | So that… | Acceptance Criteria | Engineering Spec |
 |---|---|---|---|---|---|
 | FR-005 | developer | have both devices optionally join an existing Wi-Fi network and auto-discover each other | I can evaluate the demo in an infrastructure environment | STA mode enabled via overlay or long-press mode cycle; Gateway advertises `audiogateway.local` via mDNS; Headset resolves and connects within 10 s of both devices joining; Opus overlay is valid in STA mode only | [network-module.md](../dev-specs/network-module.md) |
-| FR-006 | user | control the device with physical buttons | the demo does not require a serial terminal | Button 0 short = print Wi-Fi mode to UART; Button 0 long ≥ 3 s = cycle mode + reboot; Button 1 (headset) = Volume Up; Button 2 = Play/Pause; Button 3 = test tone; all actions debounced and reliable across all supported boards | [ui-module.md](../dev-specs/ui-module.md) |
+| FR-006 | user | control the device with physical buttons | the demo does not require a serial terminal | Mode button single click = print Wi-Fi mode to UART; double-click = trigger WPS PBC pairing in P2P modes (see FR-013); long press ≥ 3 s = cycle mode + reboot; Button 1 (headset) = Volume Up; Button 2 = Play/Pause; Button 3 = test tone; all actions debounced and reliable across all supported boards | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-007 | user | have LEDs reflect the device state | the demo is self-explanatory without a serial monitor | Rotate while connecting; solid ON when audio link established; fast blink on error / disconnected; consistent across all boards | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-008 | developer | have the Gateway accept USB audio input | any computer can feed audio into the demo without hardware modification | Gateway presents as a UAC2 (USB Audio Class 2.0) device (headset composite), class-native on Windows 10+/macOS/Linux; PC microphone audio streams over Wi-Fi; received Wi-Fi audio plays on USB headphones | [board-init-module.md](../dev-specs/board-init-module.md) |
 
@@ -228,5 +233,5 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 
 ### 4.5 NCS Version Compatibility
 
-- Must build cleanly on NCS v3.3.0 with zero compiler errors.
-- Kconfig experimental symbols are acceptable (NCS framework, not app-owned).
+- Must build cleanly on NCS v3.4.0 with zero compiler errors.
+- Kconfig experimental/deprecated symbols selected unconditionally by Nordic's own Wi-Fi driver or hostap crypto stack are acceptable (NCS framework, not app-owned); nothing in this app's own `prj.conf`/`boards/*.conf` triggers them.
