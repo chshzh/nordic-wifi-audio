@@ -9,7 +9,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_uac2.h>
-#include <zephyr/drivers/usb/udc_buf.h>
+#include <zephyr/drivers/usb/usb_buf.h>
 #include <data_fifo.h>
 
 #include "macros_common.h"
@@ -36,7 +36,7 @@ LOG_MODULE_REGISTER(audio_usb, CONFIG_MODULE_AUDIO_USB_LOG_LEVEL);
 
 /* UDC-aligned DMA scratch blocks for USB transfers. The received block is
  * copied into the (non-UDC-aligned) data_fifo and the scratch is freed.
- * See udc_buf.h for UDC_BUF_GRANULARITY and UDC_BUF_ALIGN.
+ * See usb_buf.h for UDC_BUF_GRANULARITY and UDC_BUF_ALIGN.
  */
 K_MEM_SLAB_DEFINE_STATIC(usb_rx_slab, ROUND_UP(USB_FRAME_SIZE_STEREO, UDC_BUF_GRANULARITY),
 			 USB_BLOCKS, UDC_BUF_ALIGN);

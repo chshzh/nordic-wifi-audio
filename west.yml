@@ -14,17 +14,17 @@ manifest:
       url-base: https://github.com/chshzh
 
   projects:
-    # NCS v3.3.0 — imports zephyr, bootloader, modules, nrfxlib, tools, etc.
+    # NCS v3.4.0 — imports zephyr, bootloader, modules, nrfxlib, tools, etc.
     - name: sdk-nrf
       path: nrf
-      revision: v3.3.0
+      revision: v3.4.0
       import: true
       remote: ncs
 
     # Common app modules and libraries
     - name: zego
       path: zego
-      revision: v3.3.0.2
+      revision: v3.4.0.2
       remote: chshzh
 
     # # Add more sibling projects as needed:
