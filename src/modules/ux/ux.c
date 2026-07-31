@@ -5,45 +5,31 @@
 
 /**
  * @file ux.c
- * @brief Application UX module — mode-button gestures and LED 0 Wi-Fi feedback.
+ * @brief Strong overrides of zego/bricks/ux's __weak gesture hooks.
  *
- * Mode-control button (CONFIG_APP_UX_MODE_BUTTON_IDX: idx 4/BTN5 on nRF5340
- * Audio DK, idx 0 elsewhere) gesture → action mapping:
- *   SINGLE_CLICK  Print current Wi-Fi mode to UART log.
- *   LONG_PRESS    Cycle Wi-Fi mode STA → P2P_GO → P2P_GC → STA,
- *                 save to NVS via settings, reboot.
+ * The button gestures, the LED 0 Wi-Fi state machine and the startup banner
+ * all live in zego/bricks/ux. Only the long press is overridden here, to
+ * cycle STA -> P2P_GO -> P2P_GC -> STA: SoftAP is deliberately left out
+ * (retired per refactor plan 0.2 -- P2P_GO covers the zero-infrastructure
+ * role), whereas zego/ux's default cycle includes it.
  *
- * LED 0 state machine driven by APP_WIFI_STATE_CHAN:
- *   CONNECTING  →  ROTATE  (starts at boot via SYS_INIT)
- *   CONNECTED   →  Solid ON
- *   SOFTAP      →  ROTATE  (AP up, no clients)
- *   ERROR       →  Fast BLINK  (100 ms half-period)
- *
- * Inputs:  BUTTON_CHAN, APP_WIFI_STATE_CHAN
- * Outputs: LED_CMD_CHAN
- *
- * Note: SoftAP is NOT included in the mode cycle for this project
- * (retired per refactor plan §0.2). P2P_GO replaces SoftAP's
- * zero-infrastructure role.
+ * Single click (log the current Wi-Fi mode) and double-click (trigger WPS PBC
+ * pairing in the P2P modes) keep the zego defaults.
  */
 
-#include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/zbus/zbus.h>
-#include <zephyr/logging/log.h>
 
-#include "button.h"
-#include "led.h"
-#include "wifi.h"
-#include "../messages.h"
+#include <led.h>
+#include <ux.h>
+#include <wifi.h>
 
 LOG_MODULE_REGISTER(app_ux, LOG_LEVEL_INF);
 
-/* ── Wi-Fi mode cycle ──────────────────────────────────────────────────── */
-
-/* SoftAP deliberately excluded: P2P_GO provides zero-infrastructure AP. */
+/* SoftAP deliberately excluded: P2P_GO provides the zero-infrastructure AP. */
 static const enum zego_wifi_mode mode_cycle[] = {
 	ZEGO_WIFI_MODE_STA,
 	ZEGO_WIFI_MODE_P2P_GO,
@@ -66,7 +52,7 @@ static const char *mode_name(enum zego_wifi_mode m)
 	}
 }
 
-static void do_mode_cycle(void)
+void zego_ux_on_long_press(void)
 {
 	enum zego_wifi_mode cur = zego_wifi_get_mode();
 	enum zego_wifi_mode next = ZEGO_WIFI_MODE_STA;
@@ -78,10 +64,10 @@ static void do_mode_cycle(void)
 		}
 	}
 
-	LOG_INF("Mode cycle: %s → %s — saving and rebooting", mode_name(cur), mode_name(next));
+	LOG_INF("Mode cycle: %s -> %s - saving and rebooting", mode_name(cur), mode_name(next));
 
 	uint8_t ack_led =
-		(CONFIG_APP_UX_ROTATE_COUNT > 0) ? (uint8_t)CONFIG_APP_UX_ROTATE_FIRST_LED : 0;
+		(CONFIG_ZEGO_UX_ROTATE_COUNT > 0) ? (uint8_t)CONFIG_ZEGO_UX_ROTATE_FIRST_LED : 0;
 	struct led_msg ack = {.type = LED_COMMAND_OFF, .led_number = ack_led};
 
 	zbus_chan_pub(&LED_CMD_CHAN, &ack, K_NO_WAIT);
@@ -91,161 +77,8 @@ static void do_mode_cycle(void)
 	int ret = settings_save_one("app/zego_wifi_mode", &val, sizeof(val));
 
 	if (ret) {
-		LOG_ERR("settings_save_one failed (%d) — mode not saved", ret);
+		LOG_ERR("settings_save_one failed (%d) - mode not saved", ret);
 	}
 
 	sys_reboot(SYS_REBOOT_COLD);
 }
-
-/* ── LED helpers ───────────────────────────────────────────────────────── */
-
-static void led_set(enum led_msg_type type, uint16_t period_ms)
-{
-	struct led_msg msg = {
-		.type = type,
-		.led_number = 0,
-		.period_ms = period_ms,
-	};
-
-	zbus_chan_pub(&LED_CMD_CHAN, &msg, K_NO_WAIT);
-}
-
-static void led_rotate(void)
-{
-	struct led_msg msg = {
-		.type = LED_COMMAND_ROTATE,
-		.period_ms = 0,
-	};
-
-#if CONFIG_APP_UX_ROTATE_COUNT > 0
-	msg.rotate_count = CONFIG_APP_UX_ROTATE_COUNT;
-	for (uint8_t i = 0; i < (uint8_t)CONFIG_APP_UX_ROTATE_COUNT; i++) {
-		msg.rotate_indices[i] = (uint8_t)(CONFIG_APP_UX_ROTATE_FIRST_LED + i);
-	}
-#endif
-
-	zbus_chan_pub(&LED_CMD_CHAN, &msg, K_NO_WAIT);
-}
-
-static void led_connected(void)
-{
-	struct led_msg on = {
-		.type = LED_COMMAND_ON,
-		.led_number = CONFIG_APP_UX_CONNECTED_LED,
-	};
-
-	zbus_chan_pub(&LED_CMD_CHAN, &on, K_NO_WAIT);
-
-	if (IS_ENABLED(CONFIG_APP_UX_CONNECTED_LED_GREEN_ONLY)) {
-		if (CONFIG_APP_UX_CONNECTED_LED > 0) {
-			struct led_msg off_r = {
-				.type = LED_COMMAND_OFF,
-				.led_number = CONFIG_APP_UX_CONNECTED_LED - 1,
-			};
-
-			zbus_chan_pub(&LED_CMD_CHAN, &off_r, K_NO_WAIT);
-		}
-		struct led_msg off_b = {
-			.type = LED_COMMAND_OFF,
-			.led_number = CONFIG_APP_UX_CONNECTED_LED + 1,
-		};
-
-		zbus_chan_pub(&LED_CMD_CHAN, &off_b, K_NO_WAIT);
-	}
-}
-
-static void apply_wifi_state_led(enum app_wifi_state state)
-{
-	switch (state) {
-	case APP_WIFI_STATE_CONNECTING:
-		led_rotate();
-		break;
-	case APP_WIFI_STATE_CONNECTED:
-		led_connected();
-		break;
-	case APP_WIFI_STATE_SOFTAP:
-		led_rotate();
-		break;
-	case APP_WIFI_STATE_ERROR:
-		led_set(LED_COMMAND_BLINK, 100);
-		break;
-	}
-}
-
-/* ── Deferred LED work ─────────────────────────────────────────────────── */
-
-static enum app_wifi_state last_wifi_state = APP_WIFI_STATE_CONNECTING;
-static enum app_wifi_state pending_wifi_state;
-static atomic_t app_ux_ready = ATOMIC_INIT(0);
-
-static void app_ux_led_work_fn(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	if (!atomic_get(&app_ux_ready)) {
-		return;
-	}
-	apply_wifi_state_led(pending_wifi_state);
-}
-
-static K_WORK_DEFINE(app_ux_led_work, app_ux_led_work_fn);
-
-/* ── Mode-control button listener ──────────────────────────────────────── */
-
-static void btn_listener_cb(const struct zbus_channel *chan)
-{
-	const struct button_msg *msg = zbus_chan_const_msg(chan);
-
-	/* Board-specific mode-control button (idx 4/BTN5 on nRF5340 Audio DK so
-	 * VOL- stays free; idx 0 on nRF7002DK / nRF54LM20DK).
-	 */
-	if (msg->button_number != CONFIG_APP_UX_MODE_BUTTON_IDX) {
-		return;
-	}
-
-	switch (msg->type) {
-	case BUTTON_SINGLE_CLICK:
-		LOG_INF("Wi-Fi mode: %s", mode_name(zego_wifi_get_mode()));
-		break;
-
-	case BUTTON_LONG_PRESS:
-		do_mode_cycle();
-		break;
-
-	default:
-		break;
-	}
-}
-
-ZBUS_LISTENER_DEFINE(app_btn_listener, btn_listener_cb);
-ZBUS_CHAN_ADD_OBS(BUTTON_CHAN, app_btn_listener, 0);
-
-/* ── APP_WIFI_STATE_CHAN listener → LED ────────────────────────────────── */
-
-static void wifi_state_listener_cb(const struct zbus_channel *chan)
-{
-	const struct app_wifi_state_msg *msg = zbus_chan_const_msg(chan);
-
-	last_wifi_state = msg->state;
-	pending_wifi_state = msg->state;
-	k_work_submit(&app_ux_led_work);
-}
-
-ZBUS_LISTENER_DEFINE(app_wifi_state_listener, wifi_state_listener_cb);
-ZBUS_CHAN_ADD_OBS(APP_WIFI_STATE_CHAN, app_wifi_state_listener, 0);
-
-/* ── SYS_INIT ──────────────────────────────────────────────────────────── */
-
-static int app_ux_init(void)
-{
-	led_rotate();
-	atomic_set(&app_ux_ready, 1);
-
-	if (last_wifi_state != APP_WIFI_STATE_CONNECTING) {
-		pending_wifi_state = last_wifi_state;
-		k_work_submit(&app_ux_led_work);
-	}
-
-	return 0;
-}
-
-SYS_INIT(app_ux_init, APPLICATION, CONFIG_APP_UX_INIT_PRIORITY);

@@ -39,7 +39,6 @@ rsource "src/audio/Kconfig"
 rsource "src/modules/network/Kconfig"
 rsource "src/drivers/Kconfig"
 rsource "src/modules/Kconfig"
-rsource "src/modules/ux/Kconfig"
 rsource "src/utils/Kconfig"
 
 #------------------------------------------------------------------------#

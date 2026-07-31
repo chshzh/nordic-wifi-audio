@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-# Register zego bricks: button, led, wifi, network, memonitor.
+# Register zego bricks: button, led, wifi, network, memonitor, ux.
 # Use ZEPHYR_BASE (set by zephyr-env.sh) to locate the NCS workspace root.
 # This is robust for both normal checkouts and git worktrees (which have a
 # different CMAKE_CURRENT_SOURCE_DIR depth).
@@ -16,12 +16,14 @@ get_filename_component(ZEGO_LED_DIR       "${_NCS_ROOT}/zego/bricks/led"       R
 get_filename_component(ZEGO_WIFI_DIR      "${_NCS_ROOT}/zego/bricks/wifi"      REALPATH)
 get_filename_component(ZEGO_NETWORK_DIR   "${_NCS_ROOT}/zego/bricks/network"   REALPATH)
 get_filename_component(ZEGO_MEMONITOR_DIR "${_NCS_ROOT}/zego/bricks/memonitor" REALPATH)
+get_filename_component(ZEGO_UX_DIR        "${_NCS_ROOT}/zego/bricks/ux"        REALPATH)
 list(APPEND EXTRA_ZEPHYR_MODULES
   ${ZEGO_BUTTON_DIR}
   ${ZEGO_LED_DIR}
   ${ZEGO_WIFI_DIR}
   ${ZEGO_NETWORK_DIR}
   ${ZEGO_MEMONITOR_DIR}
+  ${ZEGO_UX_DIR}
 )
 
 # Flag which defines whether application is compiled as gateway/dongle or headset
@@ -34,18 +36,21 @@ project(wifi_audio_transceiver)
 
 # Override the banner app name set by the zego wifi brick (which defaults to
 # the source folder name "nordic-wifi-audio") with a role-specific name.
+# The brick sets it with zephyr_compile_definitions(), i.e. on the global
+# zephyr_interface target, so the existing definition has to be filtered out
+# there before appending ours - otherwise the macro is defined twice.
 if(CONFIG_AUDIO_GATEWAY)
         set(_zego_wifi_banner "nordic-wifi-audio(Gateway)")
 elseif(CONFIG_AUDIO_HEADSET)
         set(_zego_wifi_banner "nordic-wifi-audio(Headset)")
 endif()
 if(DEFINED _zego_wifi_banner)
-        get_target_property(_wifi_defs ..__zego__bricks__wifi COMPILE_DEFINITIONS)
-        if(_wifi_defs)
-                list(FILTER _wifi_defs EXCLUDE REGEX "^ZEGO_BANNER_APP_NAME=")
-                list(APPEND _wifi_defs "ZEGO_BANNER_APP_NAME=\"${_zego_wifi_banner}\"")
-                set_target_properties(..__zego__bricks__wifi PROPERTIES
-                        COMPILE_DEFINITIONS "${_wifi_defs}")
+        get_target_property(_zephyr_defs zephyr_interface INTERFACE_COMPILE_DEFINITIONS)
+        if(_zephyr_defs)
+                list(FILTER _zephyr_defs EXCLUDE REGEX "^ZEGO_BANNER_APP_NAME=")
+                list(APPEND _zephyr_defs "ZEGO_BANNER_APP_NAME=\"${_zego_wifi_banner}\"")
+                set_target_properties(zephyr_interface PROPERTIES
+                        INTERFACE_COMPILE_DEFINITIONS "${_zephyr_defs}")
         endif()
 endif()
 

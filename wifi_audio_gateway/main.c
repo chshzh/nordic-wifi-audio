@@ -22,7 +22,7 @@
 #include "audio_system.h"
 #include "audio_datapath.h"
 
-#include <wifi.h> /* zego wifi brick: zego_wifi_print_banner() */
+#include <ux.h> /* zego ux brick: zego_ux_print_banner() */
 #include "streamctrl.h"
 #include "socket_utils.h"
 #include "wifi_audio_rx.h"
@@ -365,13 +365,15 @@ int main(void)
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
 
-	zego_wifi_print_banner();
+	zego_ux_print_banner();
 
 	LOG_INF("socket_utils_init");
 	ret = socket_utils_init();
 	ERR_CHK(ret);
 
-	/* Network LED now driven by ux.c via APP_WIFI_STATE_CHAN (ROTATE = connecting) */
+	/* Network LED driven by zego/bricks/ux via ZEGO_UX_WIFI_STATE_CHAN
+	 * (ROTATE = connecting)
+	 */
 	LOG_INF("audio_system_init");
 	ret = audio_system_init();
 	ERR_CHK(ret);

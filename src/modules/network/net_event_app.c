@@ -8,7 +8,8 @@
  * @brief Application-side Wi-Fi event hooks.
  *
  * Strong overrides of the zego/network brick's weak callbacks.
- * Each hook drives audio start/stop and publishes APP_WIFI_STATE_CHAN.
+ * Each hook drives audio start/stop and publishes ZEGO_UX_WIFI_STATE_CHAN
+ * (consumed by zego/bricks/ux to drive the LED 0 state machine).
  *
  * Peer address resolution (mode-branched):
  *   STA:        headset discovers gateway via mDNS (existing socket_utils path)
@@ -21,26 +22,23 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/posix/arpa/inet.h>
 
-#include "messages.h"
+#include <ux.h> /* zego ux brick: ZEGO_UX_WIFI_STATE_CHAN */
+
 #include "audio_system.h"
 #include "socket_utils.h"
 #include "streamctrl.h"
 
 LOG_MODULE_REGISTER(net_event_app, LOG_LEVEL_INF);
 
-/* APP_WIFI_STATE_CHAN is owned by this file. */
-ZBUS_CHAN_DEFINE(APP_WIFI_STATE_CHAN, struct app_wifi_state_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-		 ZBUS_MSG_INIT(.state = APP_WIFI_STATE_CONNECTING, .mode = ZEGO_WIFI_MODE_P2P_GO));
-
 /* ── Internal helper ─────────────────────────────────────────────────────── */
 
-static void pub_wifi_state(enum app_wifi_state state, enum zego_wifi_mode mode)
+static void pub_wifi_state(enum zego_ux_wifi_state state, enum zego_wifi_mode mode)
 {
-	struct app_wifi_state_msg msg = {.state = state, .mode = mode};
-	int err = zbus_chan_pub(&APP_WIFI_STATE_CHAN, &msg, K_MSEC(10));
+	struct zego_ux_wifi_state_msg msg = {.state = state, .mode = mode};
+	int err = zbus_chan_pub(&ZEGO_UX_WIFI_STATE_CHAN, &msg, K_MSEC(10));
 
 	if (err) {
-		LOG_WRN("Failed to publish APP_WIFI_STATE_CHAN: %d", err);
+		LOG_WRN("Failed to publish ZEGO_UX_WIFI_STATE_CHAN: %d", err);
 	}
 }
 
@@ -67,7 +65,7 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
 {
 	LOG_INF("Network ready (mode=%d ip=%s ssid=%s)", (int)mode, ip_addr, ssid);
 
-	pub_wifi_state(APP_WIFI_STATE_CONNECTED, mode);
+	pub_wifi_state(ZEGO_UX_WIFI_STATE_CONNECTED, mode);
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 	socket_utils_signal_dhcp_bound();
@@ -89,8 +87,15 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
 #endif
 }
 
-void zego_on_net_event_wifi_disconnect(void)
+/*
+ * will_retry is ignored on purpose: any disconnect tears the audio stream down,
+ * so the LED shows the ERROR fast-blink regardless of whether the Wi-Fi stack
+ * will keep retrying on its own.
+ */
+void zego_on_net_event_wifi_disconnect(bool will_retry)
 {
+	ARG_UNUSED(will_retry);
+
 	LOG_INF("Wi-Fi disconnected — stopping audio");
 
 	audio_system_encoder_stop();
@@ -99,7 +104,7 @@ void zego_on_net_event_wifi_disconnect(void)
 	socket_utils_clear_target();
 #endif
 
-	pub_wifi_state(APP_WIFI_STATE_ERROR, ZEGO_WIFI_MODE_STA);
+	pub_wifi_state(ZEGO_UX_WIFI_STATE_ERROR, ZEGO_WIFI_MODE_STA);
 }
 
 void zego_on_net_event_wifi_ap_enabled(enum zego_wifi_mode mode, const char *ip_addr,
@@ -130,6 +135,6 @@ void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
 		streamctrl_handle_client_disconnect();
 #endif
 
-		pub_wifi_state(APP_WIFI_STATE_ERROR, ZEGO_WIFI_MODE_P2P_GO);
+		pub_wifi_state(ZEGO_UX_WIFI_STATE_ERROR, ZEGO_WIFI_MODE_P2P_GO);
 	}
 }
