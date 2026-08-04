@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-# Register zego bricks: button, led, wifi, network, memonitor, ux.
+# Register zego bricks: button, led, wifi, network, memonitor, ux, factory_reset.
 # Use ZEPHYR_BASE (set by zephyr-env.sh) to locate the NCS workspace root.
 # This is robust for both normal checkouts and git worktrees (which have a
 # different CMAKE_CURRENT_SOURCE_DIR depth).
@@ -17,6 +17,7 @@ get_filename_component(ZEGO_WIFI_DIR      "${_NCS_ROOT}/zego/bricks/wifi"      R
 get_filename_component(ZEGO_NETWORK_DIR   "${_NCS_ROOT}/zego/bricks/network"   REALPATH)
 get_filename_component(ZEGO_MEMONITOR_DIR "${_NCS_ROOT}/zego/bricks/memonitor" REALPATH)
 get_filename_component(ZEGO_UX_DIR        "${_NCS_ROOT}/zego/bricks/ux"        REALPATH)
+get_filename_component(ZEGO_FACTORY_RESET_DIR "${_NCS_ROOT}/zego/bricks/factory_reset" REALPATH)
 list(APPEND EXTRA_ZEPHYR_MODULES
   ${ZEGO_BUTTON_DIR}
   ${ZEGO_LED_DIR}
@@ -24,6 +25,7 @@ list(APPEND EXTRA_ZEPHYR_MODULES
   ${ZEGO_NETWORK_DIR}
   ${ZEGO_MEMONITOR_DIR}
   ${ZEGO_UX_DIR}
+  ${ZEGO_FACTORY_RESET_DIR}
 )
 
 # Flag which defines whether application is compiled as gateway/dongle or headset
