@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-10-58 |
+| Version | 2026-08-04-12-20 |
 | PRD Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-04-12-20 | **Bug fix (found via hardware test):** `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` on nRF5340 Audio DK was left at its default (0) instead of matching `CONFIG_ZEGO_UX_BUTTON_IDX=4` (BTN5) — the 10 s hold silently did nothing on that board. See [board-init-module.md](board-init-module.md) and [ui-module.md](ui-module.md) Changelogs. |
 | 2026-08-04-10-58 | Updated to PRD v2026-08-04-10-56: added FR-014 factory reset. `zego` bumped v3.4.0.2→v3.4.0.3 (adds `zego/bricks/factory_reset`). New design decisions: (1) `zego/bricks/factory_reset` registered as an `EXTRA_ZEPHYR_MODULE` (`CONFIG_ZEGO_FACTORY_RESET=y`) — erases stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboots; (2) `CONFIG_ZEGO_BUTTON_LONGER_PRESS_MS=10000` enables the button brick's guarded two-tier hold on the mode-control button, so the existing 3 s mode-cycle gesture (`src/modules/ux/ux.c`'s `zego_ux_on_long_press()` override, unchanged) now fires at release instead of immediately, and is superseded by factory reset at 10 s; (3) shell trigger (`zego_factory_reset`) and button trigger both work on all boards (`CONFIG_SHELL=y` globally). See [ui-module.md](ui-module.md). |
 | 2026-07-31-14-13 | Updated to PRD v2026-07-31-14-13: migrated to NCS v3.4.0 / zego v3.4.0.2. Adopted `zego/bricks/ux` — button gestures, LED 0 state machine, and the startup banner move from `src/modules/ux/ux.c` into the brick; the app now only overrides `zego_ux_on_long_press()` to keep its SoftAP-excluded mode cycle. `APP_WIFI_STATE_CHAN` (app-owned) replaced by `ZEGO_UX_WIFI_STATE_CHAN` (brick-owned); `zego_on_net_event_wifi_disconnect()` gained a `will_retry` param (ignored). P2P_GC pairing changed from compile-time `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC` (removed by zego) to runtime double-click → WPS PBC discovery → NVS-persisted MAC (FR-013). See [ui-module.md](ui-module.md) and [network-module.md](network-module.md). OI-008 (proxy headers) resolved — `src/modules/ux/{Kconfig,button.h,led.h,wifi.h}` deleted, `<led.h>`/`<ux.h>` now resolve directly to the zego brick headers via a dedicated `zephyr_library`. |
 | 2026-06-26-11-29 | Updated to PRD v2026-06-26-11-29: UAC2 runs Full-Speed on all boards (nRF54LM20DK HS forced off after HW validation); see [board-init-module.md](board-init-module.md) |

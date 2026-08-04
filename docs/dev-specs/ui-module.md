@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-10-58 |
+| Version | 2026-08-04-12-20 |
 | PRD Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-04-12-20 | **Bug fix (found via hardware test):** on nRF5340 Audio DK, `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` was left at its default (0) while `CONFIG_ZEGO_UX_BUTTON_IDX` is 4 (BTN5) — the 10 s hold on BTN5 never triggered factory reset (see [board-init-module.md](board-init-module.md) Changelog for the fix). nRF7002DK and nRF54LM20DK were unaffected (both use idx 0 for everything, so the default already matched). |
 | 2026-08-04-10-58 | FR-014: enabled `CONFIG_ZEGO_BUTTON_LONGER_PRESS_MS=10000` so the mode-control button carries a second hold tier (`zego/bricks/factory_reset`, `CONFIG_ZEGO_FACTORY_RESET=y`). The existing 3 s mode-cycle long-press override (`zego_ux_on_long_press()`, unchanged) is now "guarded": it fires at release if released before 10 s, and is superseded by a factory reset if the hold continues to 10 s. See `zego/bricks/button/docs/button-spec.md` ("Two-Tier Hold Gesture") and [0-overview.md](0-overview.md). |
 | 2026-07-31-14-13 | **Rewrite for the NCS v3.4.0 migration — not a duplicate of `zego/bricks/ux`'s own spec.** `zego/bricks/ux` (zego v3.4.0.2) now owns button gesture dispatch, the LED 0 Wi-Fi state machine, and the startup banner outright — all previously app-owned in `src/modules/ux/ux.c`. This app keeps exactly one strong override, `zego_ux_on_long_press()`, because the brick's default long-press cycle includes SoftAP and this project deliberately excludes it (P2P_GO already covers the zero-infrastructure role). Full generic behavior (LED state diagram, Kconfig reference, banner mechanics, single-click, double-click) is documented once in [zego/bricks/ux/docs/ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) and not restated here. |
 | 2026-06-22-15-18 | Rewrite: app ux module replaces custom button_handler.c + led.c; zego bricks own hardware; mode cycle updated (STA→P2P_GO→P2P_GC, no SoftAP) |
