@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-07-31-14-13 |
+| Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
@@ -18,6 +18,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-04-10-56 | Added FR-014 (P1): factory reset via a mode-button hold (≥ 10 s) or the `zego_factory_reset` shell command — erases stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboots to the fresh-flash state. `zego` bumped v3.4.0.2→v3.4.0.3 (adds `zego/bricks/factory_reset`). The 10 s hold is deliberately distinct from the existing 3 s mode-cycle gesture (FR-006) on the same button: the 3 s gesture now fires only on release when released before 10 s (guarded), and is superseded by the 10 s hold. Added a new row to the §2.4 button table for each board. |
 | 2026-07-31-14-13 | Migrated to NCS v3.4.0 (from v3.3.0); adopted zego v3.4.0.2's `zego/bricks/ux` (button gestures, LED state machine, and startup banner now brick-owned — replaces the local ux module). P2P_GC pairing changed from a compile-time gateway MAC (`CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`, removed by zego) to runtime pairing: a fresh Headset boots idle in P2P_GC, a **double-click** on the mode button runs WPS PBC discovery and joins the pairing Gateway, and the learned MAC persists to NVS for automatic reconnect on later boots/power cycles. Added FR-013 for this pairing gesture; updated FR-004 and FR-006 to match. No change to audio transport, latency, or board support. |
 | 2026-06-26-11-29 | HW-validation correction: nRF54LM20DK runs UAC2 at **Full-Speed**, not High-Speed — HS enumeration broke the USB audio stream on macOS hosts (iso-OUT continuously cancelled). All boards now UAC2 @ Full-Speed; the per-board lower-latency HS benefit noted in the 09-55 entry does not apply and is deferred to future work. |
 | 2026-06-26-09-55 | Migrate USB audio source from USB Audio Class 1.0 (legacy stack) to UAC2 (USB Audio Class 2.0, USBD-next stack) on all boards. UAC2 enables explicit feedback (prevents long-term sample drift) and, on nRF54LM20DK, High-Speed enumeration (125 µs vs 1 ms service interval) for lower USB-side latency. Host-compatibility caveat: UAC2 is class-native on Windows 10+, macOS, and Linux; pre-Windows-10 hosts (which UAC1 supported driver-free) are no longer covered. |
@@ -107,14 +108,17 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 | | BTN4 (idx 3) | Single click | Trigger test tone |
 | | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
 | | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Long press ≥ 3 s (fires at release) | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Hold ≥ 10 s (fires immediately, no release needed) | Factory reset (FR-014) — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboot; supersedes the 3 s mode cycle for that press |
 | nRF7002DK | Button 1 / SW0 (idx 0) | Single click | Print current Wi-Fi state to UART |
 | | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Long press ≥ 3 s (fires at release) | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Hold ≥ 10 s (fires immediately, no release needed) | Factory reset (FR-014) — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboot; supersedes the 3 s mode cycle for that press |
 | | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
 | nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
 | | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Long press ≥ 3 s (fires at release) | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
+| | | Hold ≥ 10 s (fires immediately, no release needed) | Factory reset (FR-014) — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboot; supersedes the 3 s mode cycle for that press |
 | | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
 
 
@@ -188,6 +192,7 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 | FR-006 | user | control the device with physical buttons | the demo does not require a serial terminal | Mode button single click = print Wi-Fi mode to UART; double-click = trigger WPS PBC pairing in P2P modes (see FR-013); long press ≥ 3 s = cycle mode + reboot; Button 1 (headset) = Volume Up; Button 2 = Play/Pause; Button 3 = test tone; all actions debounced and reliable across all supported boards | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-007 | user | have LEDs reflect the device state | the demo is self-explanatory without a serial monitor | Rotate while connecting; solid ON when audio link established; fast blink on error / disconnected; consistent across all boards | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-008 | developer | have the Gateway accept USB audio input | any computer can feed audio into the demo without hardware modification | Gateway presents as a UAC2 (USB Audio Class 2.0) device (headset composite), class-native on Windows 10+/macOS/Linux; PC microphone audio streams over Wi-Fi; received Wi-Fi audio plays on USB headphones | [board-init-module.md](../dev-specs/board-init-module.md) |
+| FR-014 | developer | factory-reset the device back to its as-flashed state | I can recover a misconfigured device or hand it off clean without reflashing | Holding the mode button for ≥ 10 s, or running the `zego_factory_reset` shell command, erases stored Wi-Fi credentials, the saved Wi-Fi mode, and the learned P2P GO MAC, then reboots; the 10 s hold is distinct from the existing 3 s mode-cycle gesture (FR-006) on the same button — releasing before 10 s still cycles the mode (now at release instead of immediately), holding to 10 s supersedes it and performs the reset instead | [ui-module.md](../dev-specs/ui-module.md), [zego/factory_reset ↗](https://github.com/chshzh/zego/blob/main/bricks/factory_reset/docs/factory-reset-spec.md) |
 
 ### P2 — Nice to Have
 

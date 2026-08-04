@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-07-31-14-13 |
-| PRD Version | 2026-07-31-14-13 |
+| Version | 2026-08-04-10-58 |
+| PRD Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | Implemented — long-press override only (everything else owned by `zego/bricks/ux`) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-04-10-58 | FR-014: enabled `CONFIG_ZEGO_BUTTON_LONGER_PRESS_MS=10000` so the mode-control button carries a second hold tier (`zego/bricks/factory_reset`, `CONFIG_ZEGO_FACTORY_RESET=y`). The existing 3 s mode-cycle long-press override (`zego_ux_on_long_press()`, unchanged) is now "guarded": it fires at release if released before 10 s, and is superseded by a factory reset if the hold continues to 10 s. See `zego/bricks/button/docs/button-spec.md` ("Two-Tier Hold Gesture") and [0-overview.md](0-overview.md). |
 | 2026-07-31-14-13 | **Rewrite for the NCS v3.4.0 migration — not a duplicate of `zego/bricks/ux`'s own spec.** `zego/bricks/ux` (zego v3.4.0.2) now owns button gesture dispatch, the LED 0 Wi-Fi state machine, and the startup banner outright — all previously app-owned in `src/modules/ux/ux.c`. This app keeps exactly one strong override, `zego_ux_on_long_press()`, because the brick's default long-press cycle includes SoftAP and this project deliberately excludes it (P2P_GO already covers the zero-infrastructure role). Full generic behavior (LED state diagram, Kconfig reference, banner mechanics, single-click, double-click) is documented once in [zego/bricks/ux/docs/ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) and not restated here. |
 | 2026-06-22-15-18 | Rewrite: app ux module replaces custom button_handler.c + led.c; zego bricks own hardware; mode cycle updated (STA→P2P_GO→P2P_GC, no SoftAP) |
 | 2026-05-27-23-14 | Initial spec derived from code (Mode C Reverse) |
@@ -63,14 +64,17 @@ returns.
 ## The one override: `zego_ux_on_long_press()`
 
 The mode-control button (`CONFIG_ZEGO_UX_BUTTON_IDX` — index 4/BTN5 on nRF5340 Audio DK
-so VOL− stays free; index 0 on nRF7002DK/nRF54LM20DK) carries three gestures. Only
-long-press is overridden — single-click and double-click keep the brick defaults:
+so VOL− stays free; index 0 on nRF7002DK/nRF54LM20DK) carries four gestures (the fourth,
+factory reset, added by `zego/bricks/factory_reset` independently of `zego/bricks/ux` —
+see below). Only long-press is overridden — single-click and double-click keep the brick
+defaults:
 
 | Gesture | zego/ux default | This app's behavior | Resolution |
 |---|---|---|---|
 | Single-click | Log current Wi-Fi mode | *(same)* | **Not overridden** — kept at zego/ux default |
 | Double-click | P2P modes: trigger WPS PBC pairing (FR-013, see [network-module.md](network-module.md#p2p-pairing-flow-fr-013)); else: BLE-prov toggle | *(same — BLE prov not enabled, so effectively a no-op outside P2P)* | **Not overridden** — kept at zego/ux default |
-| Long-press (≥ 3 s) | Cycle STA→SoftAP→P2P_GO→P2P_GC→STA, save to NVS, reboot | Cycle **STA→P2P_GO→P2P_GC→STA** (SoftAP excluded) | **Overridden** |
+| Long-press (≥ 3 s, fires at release) | Cycle STA→SoftAP→P2P_GO→P2P_GC→STA, save to NVS, reboot | Cycle **STA→P2P_GO→P2P_GC→STA** (SoftAP excluded) | **Overridden** |
+| Longer-press (≥ 10 s, fires while held) | — (owned by `zego/bricks/factory_reset`, not `zego/bricks/ux`) | Factory reset (FR-014) — erase Wi-Fi credentials, saved mode, P2P GO MAC; reboot; supersedes the 3 s mode-cycle gesture for that press | **Not part of ux** — `CONFIG_ZEGO_FACTORY_RESET_BUTTON` listens on the same button independently |
 
 ```c
 /* src/modules/ux/ux.c — the project's only strong override */
@@ -100,4 +104,7 @@ the brick.
 | `Mode cycle: p2p_go -> p2p_gc - saving and rebooting` | Long-press mode cycle executed (app override) |
 
 See [ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) for single-click, double-click,
-and LED test points — this app does not override those.
+and LED test points — this app does not override those. See
+[factory-reset-spec.md](../../../zego/bricks/factory_reset/docs/factory-reset-spec.md)
+for the 10 s hold / `zego_factory_reset` shell command test points (FR-014) — not
+overridden by this app either.

@@ -27,7 +27,8 @@
 - **Opus codec option** — add `overlay-opus.conf` for compressed streaming with configurable bitrate (STA mode only; mutually exclusive with P2P on nRF5340).
 - **USB audio source (default)** — Gateway appears as a UAC2 USB sound card on the host PC (class-native on Windows 10+, macOS, and Linux); set it as the output device and any audio plays wirelessly.
 - **Analog audio source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
-- **Runtime mode switching** — Button 0 long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
+- **Runtime mode switching** — Wi-Fi control button long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
+- **Factory reset** — hold the Wi-Fi control button for ≥ 10 s (or run the `zego_factory_reset` shell command) to erase stored Wi-Fi credentials, the saved Wi-Fi mode, and the P2P GO MAC, then reboot the device back to its just-flashed state; provided by **[zego/factory_reset](https://github.com/chshzh/zego/blob/main/bricks/factory_reset/docs/factory-reset-spec.md)**
 - **Visual status feedback** — LED rotates while connecting, solid ON during active audio link, fast blink on error.
 - **Startup banner** — prints firmware version, board, role, Wi-Fi mode, and connection instructions at every boot.
 
@@ -87,22 +88,37 @@ LED 0 begins rotating. Mode-specific connection:
 
 ### Buttons
 
-| Board | Button | Gesture | Action |
-|-------|--------|---------|--------|
-| nRF5340 Audio DK + nRF7002EK | VOL- (idx 0) | Single click | Volume Down |
-| | VOL+ (idx 1) | Single click | Volume Up |
-| | PLAY/PAUSE (idx 2) | Single click | Play / Pause audio stream |
-| | BTN4 (idx 3) | Single click | Trigger test tone |
-| | BTN5 (idx 4) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
-| nRF7002DK | Button 1 (idx 0) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
-| | Button 2 (idx 1) | Any | Available (no default audio function — gateway only) |
-| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
-| | | Long press ≥ 3 s | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
-| | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
+Every board exposes one **Wi-Fi control button** with identical Wi-Fi gestures — only
+its physical location differs. All other buttons carry this app's own audio-specific
+actions, or are free on gateway-only boards:
 
-> **Note:** BTN5 (idx 4) is reserved for Wi-Fi mode control on nRF5340 Audio DK; VOL- (idx 0) is available for Volume Down.
+| Board | Wi-Fi control button | Other buttons |
+|-------|-----------------------|----------------|
+| nRF5340 Audio DK + nRF7002EK | BTN5 (idx 4) | VOL- (idx 0) Volume Down, VOL+ (idx 1) Volume Up, PLAY/PAUSE (idx 2) Play/Pause, BTN4 (idx 3) test tone |
+| nRF7002DK | Button 1 / SW0 (idx 0) | Button 2 / SW1 (idx 1) — available (no default audio function, gateway only) |
+| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | BUTTON1–2 (idx 1–2) — available (no default audio function, gateway only) |
+
+**Wi-Fi control button gestures** (same on every board):
+
+| Gesture | Action |
+|---------|--------|
+| Single click | Print current Wi-Fi state to UART |
+| Double-click | Trigger WPS PBC pairing (P2P modes only) |
+| Long press ≥ 3 s (fires at release) | Cycle mode STA → P2P_GO → P2P_GC → STA; save to NVS; reboot |
+| Longer press ≥ 10 s (fires at 10 s, no release needed) | Factory reset — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC; reboot to fresh-flash state; supersedes the 3 s mode cycle for that press |
+
+> **Why the two hold gestures fire at different points**: the ≥ 3 s mode
+> cycle is a *middle* tier — the device can't know at 3 s whether you meant
+> the short action or are on your way to the 10 s one — so it waits for
+> release and only fires if you let go before 10 s. The ≥ 10 s factory reset
+> is the *final* tier, so nothing can supersede it; it fires immediately at
+> 10 s while you're still holding, giving instant confirmation for a
+> destructive action. See
+> [`zego/bricks/button/docs/button-spec.md`](https://github.com/chshzh/zego/blob/main/bricks/button/docs/button-spec.md)
+> ("Two-Tier Hold Gesture").
+
+Factory reset is also available as the `zego_factory_reset
+[list|all|wifi_cred|wifi_mode|p2p_go_mac]` shell command on all boards.
 
 ### LEDs
 
@@ -261,7 +277,7 @@ See the Nordic guide on [Workspace Application Setup](https://docs.nordicsemi.co
 
 ### Build
 
-> **One firmware, both modes.** The default build (with the `wifi-p2p` snippet) is a **dual-mode** image that supports **both** Wi-Fi Direct P2P **and** infrastructure STA with mDNS auto-discovery in a single binary. The active mode is stored in NVS; switch it at runtime with the `zego_wifi_mode` shell command or a Button 0 long-press. A smaller STA-only image (no snippet) is available when P2P is not needed.
+> **One firmware, both modes.** The default build (with the `wifi-p2p` snippet) is a **dual-mode** image that supports **both** Wi-Fi Direct P2P **and** infrastructure STA with mDNS auto-discovery in a single binary. The active mode is stored in NVS; switch it at runtime with the `zego_wifi_mode` shell command or a Wi-Fi control button long-press. A smaller STA-only image (no snippet) is available when P2P is not needed.
 
 ```sh
 # Go to app root first
@@ -340,7 +356,7 @@ west flash -d build_headset_nrf5340audiodk
 ### Developer Notes
 
 - **One dual-mode firmware (default, with the `wifi-p2p` snippet).** A single image supports both P2P and STA-with-mDNS. It fits in ~99 % of the nRF5340's 1 MB flash because the C library is **picolibc** (−~15 KB flash / −~14 KB RAM vs newlib) and the LC3/CMSIS-DSP test-tone path was replaced with a local square-wave generator. An STA-only image (no snippet) is ~63 % flash.
-- **Runtime mode switch:** `zego_wifi_mode [sta|p2p_go|p2p_gc]` (or Button 0 long-press) saves the mode to NVS and reboots. Per-role visibility: Gateway exposes `sta`/`p2p_go`, Headset exposes `sta`/`p2p_gc` (via `CONFIG_ZEGO_WIFI_MODE_*_ENABLED`).
+- **Runtime mode switch:** `zego_wifi_mode [sta|p2p_go|p2p_gc]` (or a Wi-Fi control button long-press) saves the mode to NVS and reboots. Per-role visibility: Gateway exposes `sta`/`p2p_go`, Headset exposes `sta`/`p2p_gc` (via `CONFIG_ZEGO_WIFI_MODE_*_ENABLED`).
 - **STA mode auto-connection:** Store credentials with `wifi cred add -s <SSID> -p <pass> -k 1`, then `zego_wifi_mode sta`. The Gateway auto-connects and registers an mDNS DNS-SD service (`_nrfwifiaudio._udp.local`); the Headset (with `MDNS_RESOLVER` + `DNS_SERVER_IP_ADDRESSES`) discovers it via PTR→SRV→A and connects — no manual IP entry.
 - **P2P mode auto-connection:** Gateway boots as P2P_GO; Headset (P2P_GC) auto-connects using the GO MAC in `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`. The GO runs a DHCP server (needs `CONFIG_NET_MAX_CONN`/`NET_MAX_CONTEXTS` ≥ 8 so its port-67 socket can bind alongside mDNS). Static IP pair: 192.168.7.1 (Gateway) / 192.168.7.2 (Headset).
 - **Long-duration streaming survives GTK rekey (P2P_GO).** The audio link is unicast UDP (`src/modules/network/socket_utils.c` — `sendto` to a single peer, no multicast/broadcast), so it is protected by the pairwise key (PTK); a group-key (GTK) rekey rotates only the broadcast/multicast key and never touches the stream's data path. In addition, P2P_GO always negotiates WPA2-PSK/CCMP, and NCS hostap raises the GTK rekey interval to **24 h** for strong ciphers — `modules/lib/hostap/wpa_supplicant/ap.c:729` (*"strong ciphers do not need frequent rekeying"*), vs the 600 s hostapd default — so a rekey effectively never fires during a listening session. This avoids the periodic stalls seen on older/non-CCMP SoftAP setups whose 600 s GTK rekey disrupted streaming. The app sets no `wpa_group_rekey` of its own; it relies on this default (which applies equally to a WPA2-CCMP SoftAP on this NCS tree — the win comes from the strong-cipher path + unicast transport, not from P2P being a different rekey protocol).
