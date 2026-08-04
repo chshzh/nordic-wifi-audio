@@ -116,12 +116,12 @@ void zego_on_net_event_wifi_ap_enabled(enum zego_wifi_mode mode, const char *ip_
 	LOG_INF("AP/P2P_GO enabled, waiting for client");
 }
 
-void zego_on_net_event_wifi_ap_sta_connected(int sta_count)
-{
-	LOG_INF("AP/P2P_GO client joined (count=%d)", sta_count);
-	/* dhcp_bound fires for the first client via zego/network brick and
-	 * handles audio start via the AUDIO_START_CMD path. */
-}
+/* zego_on_net_event_wifi_ap_sta_connected() is NOT overridden here — zego/network's
+ * own __weak default already publishes ZEGO_UX_WIFI_STATE_CONNECTED with the
+ * correct active mode (fixed to use active_mode instead of a hardcoded SOFTAP
+ * value), so LED 0 leaves ROTATE on the P2P_GO/SoftAP side without app help.
+ * Audio start itself is unaffected either way, since it's driven by the
+ * headset's AUDIO_START_CMD over the socket. */
 
 void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
 {
