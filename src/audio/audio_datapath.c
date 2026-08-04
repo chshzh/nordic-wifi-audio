@@ -668,6 +668,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 				/* Only increment if not in under-run condition */
 				ctrl_blk.out.cons_blk_idx = next_out_blk_idx;
 				if (underrun_condition) {
+					LOG_WRN("Audio streaming resumed after %d ms silent (I2S TX under-run cleared)",
+						ctrl_blk.out.total_blk_underruns);
 					underrun_condition = false;
 					ctrl_blk.out.total_blk_underruns = 0;
 				}
@@ -677,6 +679,10 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 
 			} else {
 				if (stream_state_get() == STATE_STREAMING) {
+					if (!underrun_condition) {
+						LOG_WRN("Audio streaming stopped - I2S TX under-run "
+							"(no new data, playing silence)");
+					}
 					underrun_condition = true;
 					ctrl_blk.out.total_blk_underruns++;
 
