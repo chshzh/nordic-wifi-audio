@@ -26,6 +26,9 @@ LOG_MODULE_REGISTER(audio_system, CONFIG_AUDIO_SYSTEM_LOG_LEVEL);
 #define FIFO_TX_BLOCK_COUNT (CONFIG_FIFO_FRAME_SPLIT_NUM * CONFIG_FIFO_TX_FRAME_COUNT)
 #define FIFO_RX_BLOCK_COUNT (CONFIG_FIFO_FRAME_SPLIT_NUM * CONFIG_FIFO_RX_FRAME_COUNT)
 
+/* Blocks arrive 1 per ms, so only a stall longer than the fifo_rx depth costs audio. */
+#define TX_STALL_LOG_US (FIFO_RX_BLOCK_COUNT * 1000U)
+
 #define DEBUG_INTERVAL_NUM     1000
 #define TEST_TONE_BASE_FREQ_HZ 1000
 
@@ -189,12 +192,24 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 		}
 
 		if (sw_codec_cfg.encoder.enabled) {
+			uint32_t tx_start = k_cycle_get_32();
+			uint32_t tx_us;
+
 #if (CONFIG_SW_CODEC_OPUS)
 			send_audio_frame(encoded_data, encoded_data_size);
 #else
 			// send_audio_frame(uint8_t *audio_data, size_t data_length);
 			send_audio_frame(pcm_raw_data, FRAME_SIZE_BYTES);
 #endif // CONFIG_CODEC_OPUS
+
+			/* fifo_rx is not drained while this thread blocks in Wi-Fi TX, so a stall
+			 * longer than FIFO_RX_BLOCK_COUNT ms costs audio blocks.
+			 */
+			tx_us = k_cyc_to_us_floor32(k_cycle_get_32() - tx_start);
+			if (tx_us > TX_STALL_LOG_US) {
+				LOG_WRN("Wi-Fi TX stalled %u us (fifo_rx depth %u ms)", tx_us,
+					FIFO_RX_BLOCK_COUNT);
+			}
 		}
 
 		STACK_USAGE_PRINT("encoder_thread", &encoder_thread_data);
@@ -203,7 +218,23 @@ static void encoder_thread(void *arg1, void *arg2, void *arg3)
 
 void audio_system_encoder_start(void)
 {
-	LOG_INF("Encoder started");
+	void *stale;
+	size_t stale_size;
+	uint32_t flushed = 0;
+
+	/* USB has been filling fifo_rx since audio_system_start(), but nothing drained it
+	 * until now, so it is full. Producer and consumer then both run at 1 blk/ms and the
+	 * FIFO would stay pinned at full, making every scheduling jitter an overrun that
+	 * discards a block (audible click). Drain it so streaming starts with headroom.
+	 * Done block-by-block rather than with data_fifo_empty(), which re-inits the mem
+	 * slab and would race the live USB callback.
+	 */
+	while (data_fifo_pointer_last_filled_get(&fifo_rx, &stale, &stale_size, K_NO_WAIT) == 0) {
+		data_fifo_block_free(&fifo_rx, stale);
+		flushed++;
+	}
+
+	LOG_INF("Encoder started (flushed %u stale USB blocks)", flushed);
 	k_poll_signal_raise(&encoder_sig, 0);
 }
 
