@@ -57,7 +57,6 @@ static int udp_socket;
 struct sockaddr_in self_addr;
 char target_addr_str[32];
 struct sockaddr_in target_addr;
-socklen_t target_addr_len = sizeof(target_addr);
 
 static socket_receive_t socket_receive;
 
@@ -449,20 +448,38 @@ void socket_utils_thread(void)
 #endif
 
 		while (true) {
-			target_addr_len = sizeof(target_addr);
+			struct sockaddr_in peer_addr;
+			socklen_t peer_addr_len = sizeof(peer_addr);
+
 			socket_receive.len =
 				recvfrom(udp_socket, socket_receive.buf, BUFFER_MAX_SIZE, 0,
-					 (struct sockaddr *)&target_addr, &target_addr_len);
+					 (struct sockaddr *)&peer_addr, &peer_addr_len);
 			if (socket_receive.len <= 0) {
 				break;
 			}
+
+			/* peer_addr must stay separate from target_addr: receiving into the
+			 * TX destination lets any stray datagram silently retarget the audio
+			 * stream, which then black-holes with sendto() still reporting success.
+			 */
+			if (socket_connected_signall &&
+			    peer_addr.sin_addr.s_addr != target_addr.sin_addr.s_addr) {
+				char peer_str[32];
+
+				inet_ntop(peer_addr.sin_family, &peer_addr.sin_addr, peer_str,
+					  sizeof(peer_str));
+				LOG_WRN("Ignoring %d bytes from unexpected peer %s",
+					socket_receive.len, peer_str);
+				continue;
+			}
+
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 			if (!serveraddr_set_signall) {
-				inet_ntop(target_addr.sin_family, &target_addr.sin_addr,
+				inet_ntop(peer_addr.sin_family, &peer_addr.sin_addr,
 					  target_addr_str, sizeof(target_addr_str));
 				LOG_INF("Discovered socket server at %s:%d", target_addr_str,
-					ntohs(target_addr.sin_port));
-				socket_utils_set_target_ipv4(&target_addr.sin_addr);
+					ntohs(peer_addr.sin_port));
+				socket_utils_set_target_ipv4(&peer_addr.sin_addr);
 			}
 
 			if (!socket_ready) {
@@ -472,6 +489,10 @@ void socket_utils_thread(void)
 
 #endif
 			if (!socket_connected_signall) {
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+				/* Server learns the client's address from its first datagram. */
+				target_addr = peer_addr;
+#endif
 				inet_ntop(target_addr.sin_family, &target_addr.sin_addr,
 					  target_addr_str, sizeof(target_addr_str));
 				LOG_INF("Connect socket to IP Address %s:%d\n", target_addr_str,
