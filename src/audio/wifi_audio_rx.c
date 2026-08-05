@@ -52,13 +52,13 @@ DATA_FIFO_DEFINE(wifi_audio_rx, CONFIG_BUF_WIFI_RX_PACKET_NUM, sizeof(struct aud
 
 #endif
 static int16_t rx_data_continute_count = 0;
+static uint32_t rx_fifo_overruns;
 void audio_data_frame_process(uint8_t *p_data, size_t data_size)
 {
 	int ret;
 	uint32_t blocks_alloced_num, blocks_locked_num;
 	struct audio_pcm_data_t *data_received = NULL;
 	// static struct rx_stats rx_stats[AUDIO_CH_NUM];
-	static uint32_t num_overruns;
 
 	if (!initialized) {
 		ERR_CHK_MSG(-EPERM, "Data received but wifi_audio_rx is not initialized");
@@ -112,11 +112,10 @@ void audio_data_frame_process(uint8_t *p_data, size_t data_size)
 
 		void *stale_data;
 		size_t stale_size;
-		num_overruns++;
 
-		if ((num_overruns % 100) == 1) {
-			LOG_DBG("WiFI RX FIFO overrun: Num: %d", num_overruns);
-		}
+		/* Drops a whole 10 ms frame, and it is invisible to the RX frame
+		 * accounting because the frame was received correctly. */
+		rx_fifo_overruns++;
 
 		ret = data_fifo_pointer_last_filled_get(&wifi_audio_rx, &stale_data, &stale_size,
 							K_NO_WAIT);
@@ -149,90 +148,72 @@ void audio_data_frame_process(uint8_t *p_data, size_t data_size)
 #define TOTAL_PACKET_SIZE (1024 + 896) // Total size of the two packets to be assembled
 
 #define MAX_AUDIO_FRAME_SIZE 1920
-#define HEADER_SIZE          3 // Start sequence (2 bytes) + identifier (1 byte)
-#define FOOTER_SIZE          2 // End sequence (2 bytes)
-#define FULL_FRAME_SIZE      (HEADER_SIZE + MAX_AUDIO_FRAME_SIZE + FOOTER_SIZE)
+/* [0,1] start seq, [2] identifier, [3,4] payload length (big endian). The length makes
+ * framing content-independent; scanning the payload for an end marker misfires whenever
+ * PCM audio happens to contain those bytes, which truncates the frame and drops its tail.
+ */
+#define HEADER_SIZE     5
+#define FULL_FRAME_SIZE (HEADER_SIZE + MAX_AUDIO_FRAME_SIZE)
+
+static uint32_t rx_frames_ok;
+static uint32_t rx_lost_head;
+static uint32_t rx_lost_tail;
 
 void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 {
+	/* Each audio frame spans two UDP datagrams (socket_utils_tx_data chunks at 1024). */
+	static uint8_t frame_buffer[FULL_FRAME_SIZE];
+	static size_t current_frame_size;
+	size_t payload_len;
+	bool is_head;
 
-	// LOG_DBG("Received data size: %d", data_size);
-	// LOG_HEXDUMP_INF(p_data, data_size, "Received data:");
-	// Static buffer to store accumulated data
-	static uint8_t frame_buffer[FULL_FRAME_SIZE]; // Buffer sized for a full frame with headers
-						      // and footers
-	static size_t current_frame_size = 0;
+	is_head = (data_size >= HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
+		   p_data[1] == START_SEQUENCE_2 && p_data[2] == SEND_DATA_SIGN);
 
-	/* Each audio frame is sent as two UDP datagrams (see socket_utils_tx_data
-	 * chunking). If the tail datagram is lost over Wi-Fi, a partial frame is
-	 * left in the buffer. When the next datagram begins with a valid frame
-	 * header (start sequence + known identifier) it starts a NEW frame, so
-	 * discard the stale partial data and resync here — otherwise it would
-	 * overflow into and corrupt this new frame, cascading one packet loss
-	 * into several dropped frames.
-	 */
-	if (data_size >= HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
-	    p_data[1] == START_SEQUENCE_2 &&
-	    (p_data[2] == SEND_DATA_SIGN || p_data[2] == SEND_CMD_SIGN)) {
+	if (is_head) {
+		/* Drop any partial frame left behind by a lost tail datagram. */
 		current_frame_size = 0;
+	} else if (current_frame_size == 0) {
+		/* Tail with no head: the head datagram was lost. */
+		rx_lost_head++;
+		return;
 	}
 
-	// Copy incoming data chunk to frame buffer if it fits
 	if (current_frame_size + data_size > FULL_FRAME_SIZE) {
-		/* Recoverable: a lost datagram left an unterminated partial frame.
-		 * Drop it and resync (DBG, not ERR — this is expected on UDP loss).
-		 */
-		LOG_DBG("Frame buffer overflow, discarding accumulated data.");
-		current_frame_size = 0; // Reset if overflowed
+		rx_lost_tail++;
+		current_frame_size = 0;
 		return;
 	}
 
 	memcpy(frame_buffer + current_frame_size, p_data, data_size);
 	current_frame_size += data_size;
 
-	// Check if we have at least the minimum size for a complete frame
-	if (current_frame_size >= HEADER_SIZE + FOOTER_SIZE) {
-		// Verify start sequence
-		if (frame_buffer[0] == START_SEQUENCE_1 && frame_buffer[1] == START_SEQUENCE_2) {
-			// Check for end sequence at the expected position
-			if (current_frame_size >= HEADER_SIZE + FOOTER_SIZE &&
-			    frame_buffer[current_frame_size - 2] == END_SEQUENCE_1 &&
-			    frame_buffer[current_frame_size - 1] == END_SEQUENCE_2) {
-
-				// Verify the identifier
-				if (frame_buffer[2] == SEND_DATA_SIGN) {
-					// Calculate audio data length
-					size_t audio_data_length =
-						current_frame_size - HEADER_SIZE - FOOTER_SIZE;
-					if (audio_data_length <= MAX_AUDIO_FRAME_SIZE) {
-
-						// Process the audio data
-						audio_data_frame_process(frame_buffer + HEADER_SIZE,
-									 audio_data_length);
-						LOG_DBG("Audio frame data length: %d",
-							audio_data_length);
-					} else {
-						LOG_ERR("Audio data length exceeds maximum frame "
-							"size.");
-					}
-				} else {
-					/* Orphan tail after a lost head datagram landed a
-					 * non-data id at offset 2 — recoverable, resync.
-					 */
-					LOG_DBG("Unexpected data identifier.");
-				}
-
-				// Reset buffer for the next frame
-				current_frame_size = 0;
-			}
-		} else {
-			/* Lost head datagram: this orphan tail does not start with the
-			 * frame header. Drop and resync (DBG — expected on UDP loss).
-			 */
-			LOG_DBG("Invalid start sequence, discarding packet.");
-			current_frame_size = 0; // Reset on invalid start sequence
-		}
+	if (current_frame_size < HEADER_SIZE) {
+		return;
 	}
+
+	payload_len = ((size_t)frame_buffer[3] << 8) | (size_t)frame_buffer[4];
+
+	if (payload_len > MAX_AUDIO_FRAME_SIZE) {
+		LOG_ERR("Invalid frame length %u", payload_len);
+		current_frame_size = 0;
+		return;
+	}
+
+	if (current_frame_size < (HEADER_SIZE + payload_len)) {
+		/* Tail datagram still outstanding. */
+		return;
+	}
+
+	audio_data_frame_process(frame_buffer + HEADER_SIZE, payload_len);
+
+	/* ~100 frames/s, so this is a 5 s summary. */
+	if ((++rx_frames_ok % 500) == 0) {
+		LOG_DBG("RX frames ok=%u lost_head=%u lost_tail=%u fifo_ovr=%u", rx_frames_ok,
+			rx_lost_head, rx_lost_tail, rx_fifo_overruns);
+	}
+
+	current_frame_size = 0;
 }
 
 /**
@@ -321,31 +302,22 @@ void send_audio_command(uint8_t audio_command)
 
 void send_audio_frame(uint8_t *audio_data, size_t data_length)
 {
-	// Define the data packet size, including start and end sequences
-	size_t total_packet_size = 5 + data_length; // 4 bytes for headers + data_length
+	/* Only ever called from the encoder thread, so a static buffer is safe and avoids
+	 * a k_malloc/k_free pair 100 times a second. */
+	static uint8_t data_packet[FULL_FRAME_SIZE];
 
-	// Create a buffer for the complete data packet
-	uint8_t *data_packet = (uint8_t *)k_malloc(total_packet_size);
-	if (data_packet == NULL) {
-		LOG_ERR("Memory allocation failed for data_packet.");
+	if (data_length > MAX_AUDIO_FRAME_SIZE) {
+		LOG_ERR("Audio frame too large: %u", data_length);
 		return;
 	}
 
-	// Fill the data packet with the specified format
-	data_packet[0] = START_SEQUENCE_1; // 0xFF
-	data_packet[1] = START_SEQUENCE_2; // 0xAA
-	data_packet[2] = SEND_DATA_SIGN;   // Data identifier (can be changed as needed)
+	data_packet[0] = START_SEQUENCE_1;
+	data_packet[1] = START_SEQUENCE_2;
+	data_packet[2] = SEND_DATA_SIGN;
+	data_packet[3] = (uint8_t)(data_length >> 8);
+	data_packet[4] = (uint8_t)(data_length & 0xFF);
 
-	// Copy the audio data into the packet starting at the offset for the actual data
-	bytecpy(data_packet + 3, audio_data, data_length); // 3rd byte is data identifier
+	memcpy(data_packet + HEADER_SIZE, audio_data, data_length);
 
-	// Fill the end header
-	data_packet[total_packet_size - 2] = END_SEQUENCE_1; // 0xFF
-	data_packet[total_packet_size - 1] = END_SEQUENCE_2; // 0xBB
-
-	// Send the prepared data packet
-	socket_utils_tx_data(data_packet, total_packet_size);
-
-	// Free allocated memory
-	k_free(data_packet);
+	socket_utils_tx_data(data_packet, HEADER_SIZE + data_length);
 }
