@@ -95,6 +95,21 @@ int numDec = 0;                              /*Number of decoded samples or @ref
 /* How often to print under-run warning */
 #define UNDERRUN_LOG_INTERVAL_BLKS 5000
 
+/* Minimum consecutive under-run blocks before logging stopped/resumed — Wi-Fi
+ * delivery jitter of a few ms is routine and inaudible; only warn once a gap
+ * is long enough to matter. */
+#define UNDERRUN_LOG_THRESHOLD_BLKS 30
+
+/* Jitter buffer depth (1 blk = 1 ms). Playback stays silent until this many
+ * blocks are queued, and re-arms after every under-run — without it the
+ * consumer drains each 10 ms frame on arrival, so any network jitter above
+ * ~10 ms starves I2S and inserts an audible click. Costs this much latency. */
+/* Wi-Fi delivers frames in bursts: measured gaps of ~46 ms with zero frame loss, so the
+ * buffer must ride out more than one gap. FIFO_NUM_BLKS is 120, leaving 40 blocks of
+ * overrun headroom above this target.
+ */
+#define PREBUF_TARGET_BLKS 80
+
 enum drift_comp_state {
 	DRIFT_STATE_INIT,   /* Waiting for data to be received */
 	DRIFT_STATE_CALIB,  /* Calibrate and zero out local delay */
@@ -141,6 +156,8 @@ static struct {
 		uint16_t prod_blk_idx; /* Output producer audio block index */
 		uint16_t cons_blk_idx; /* Output consumer audio block index */
 		uint32_t prod_blk_ts[FIFO_NUM_BLKS];
+		/* False while the jitter buffer refills; zeroed by audio_datapath_start() */
+		bool playing;
 		/* Statistics */
 		uint32_t total_blk_underruns;
 	} out;
@@ -634,6 +651,66 @@ static void alt_buffer_free_both(void)
 	alt.buf_1_in_use = false;
 }
 
+/* Queued output blocks, handling the circular wrap that a plain index
+ * subtraction gets wrong once prod_blk_idx has wrapped past cons_blk_idx. */
+static int32_t out_fifo_fill_blks(void)
+{
+	int32_t fill = (int32_t)ctrl_blk.out.prod_blk_idx - (int32_t)ctrl_blk.out.cons_blk_idx;
+
+	if (fill < 0) {
+		fill += FIFO_NUM_BLKS;
+	}
+
+	return fill;
+}
+
+/* A hard cut to or from zero is a step discontinuity, which is audible as a broadband
+ * click however short the mute is. Ramp across one block (1 ms) instead.
+ */
+static int16_t last_played_blk[BLK_STEREO_NUM_SAMPS];
+static bool fade_in_pending;
+
+static void fade_block(int16_t *blk, bool fade_in)
+{
+	for (uint32_t i = 0; i < BLK_STEREO_NUM_SAMPS; i++) {
+		uint32_t pos = fade_in ? i : (BLK_STEREO_NUM_SAMPS - 1 - i);
+
+		blk[i] = (int16_t)(((int32_t)blk[i] * (int32_t)pos) /
+				   (int32_t)(BLK_STEREO_NUM_SAMPS - 1));
+	}
+}
+
+/* The Wi-Fi path carries no sdu_ref timestamps, so audio_datapath_drift_compensation()
+ * never leaves DRIFT_STATE_INIT and the APLL free-runs against the source clock. Servo
+ * on FIFO fill instead: fill below target means I2S is draining faster than the source
+ * fills, so the APLL must slow down. 1 LSB ~= 3.31 ppm, and Kp alone covers ~1200 ppm
+ * at 11 blocks of error, which keeps the loop well damped; Ki then trims the residual.
+ */
+#define RATE_CTRL_KP        35
+#define RATE_CTRL_KI        1
+#define RATE_CTRL_INTEG_MAX 1000
+
+static uint16_t rate_ctrl_update(int32_t fill_avg)
+{
+	static int32_t integ;
+	int32_t err, freq;
+
+	if (!ctrl_blk.out.playing || stream_state_get() != STATE_STREAMING) {
+		integ = 0;
+		return APLL_FREQ_CENTER;
+	}
+
+	err = fill_avg - PREBUF_TARGET_BLKS;
+	integ = CLAMP(integ + err, -RATE_CTRL_INTEG_MAX, RATE_CTRL_INTEG_MAX);
+
+	freq = APLL_FREQ_CENTER + (RATE_CTRL_KP * err) + (RATE_CTRL_KI * integ);
+	freq = CLAMP(freq, APLL_FREQ_MIN, APLL_FREQ_MAX);
+
+	hfclkaudio_set((uint16_t)freq);
+
+	return (uint16_t)freq;
+}
+
 /*
  * This handler function is called every time I2S needs new buffers for
  * TX and RX data.
@@ -649,6 +726,7 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 {
 	int ret;
 	static bool underrun_condition;
+	static bool underrun_logged;
 
 	alt_buffer_free(tx_buf_released);
 
@@ -663,13 +741,48 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 		if (tx_buf_released != NULL) {
 			/* Double buffered index */
 			uint32_t next_out_blk_idx = NEXT_IDX(ctrl_blk.out.cons_blk_idx);
+			bool have_data = (next_out_blk_idx != ctrl_blk.out.prod_blk_idx);
+			static uint32_t ctrl_period_cnt;
+			static int32_t fill_sum;
 
-			if (next_out_blk_idx != ctrl_blk.out.prod_blk_idx) {
+			/* Instantaneous fill carries +/-1 frame of sampling phase noise, which
+			 * the controller gain would turn into audible pitch wobble. Average
+			 * over the whole control period instead.
+			 */
+			fill_sum += out_fifo_fill_blks();
+
+			if ((++ctrl_period_cnt % 1000) == 0) {
+				int32_t fill_avg = fill_sum / 1000;
+				uint16_t apll;
+
+				fill_sum = 0;
+				apll = rate_ctrl_update(fill_avg);
+
+				LOG_DBG("out FIFO fill avg %d/%d blks, APLL %u", fill_avg,
+					FIFO_NUM_BLKS, apll);
+			}
+
+			if (!ctrl_blk.out.playing) {
+				/* Refilling: hold the FIFO and stay silent. */
+				if (out_fifo_fill_blks() >= PREBUF_TARGET_BLKS) {
+					ctrl_blk.out.playing = true;
+					/* DIAG: pairs with the "ran dry" line below. */
+					LOG_WRN("Jitter buffer refilled after %u ms mute",
+						ctrl_blk.out.total_blk_underruns);
+				} else {
+					have_data = false;
+				}
+			}
+
+			if (have_data) {
 				/* Only increment if not in under-run condition */
 				ctrl_blk.out.cons_blk_idx = next_out_blk_idx;
 				if (underrun_condition) {
-					LOG_WRN("Audio streaming resumed after %d ms silent (I2S TX under-run cleared)",
-						ctrl_blk.out.total_blk_underruns);
+					if (underrun_logged) {
+						LOG_WRN("Audio streaming resumed after %d ms silent (I2S TX under-run cleared)",
+							ctrl_blk.out.total_blk_underruns);
+						underrun_logged = false;
+					}
 					underrun_condition = false;
 					ctrl_blk.out.total_blk_underruns = 0;
 				}
@@ -677,14 +790,34 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 				tx_buf = (uint8_t *)&ctrl_blk.out
 						 .fifo[next_out_blk_idx * BLK_STEREO_NUM_SAMPS];
 
+				if (fade_in_pending) {
+					fade_block((int16_t *)tx_buf, true);
+					fade_in_pending = false;
+				}
+
+				memcpy(last_played_blk, tx_buf, BLK_STEREO_SIZE_OCTETS);
+
 			} else {
+				bool first_mute_blk = ctrl_blk.out.playing;
+
 				if (stream_state_get() == STATE_STREAMING) {
-					if (!underrun_condition) {
-						LOG_WRN("Audio streaming stopped - I2S TX under-run "
-							"(no new data, playing silence)");
+					/* Ran dry — refill before resuming, else the next
+					 * packet gap starves I2S straight away. */
+					if (ctrl_blk.out.playing) {
+						/* DIAG: start of the refill mute. */
+						LOG_WRN("Jitter buffer ran dry - muting to refill");
 					}
+					ctrl_blk.out.playing = false;
 					underrun_condition = true;
 					ctrl_blk.out.total_blk_underruns++;
+
+					if (!underrun_logged &&
+					    ctrl_blk.out.total_blk_underruns >=
+						    UNDERRUN_LOG_THRESHOLD_BLKS) {
+						LOG_WRN("Audio streaming stopped - I2S TX under-run "
+							"(no new data, playing silence)");
+						underrun_logged = true;
+					}
 
 					if ((ctrl_blk.out.total_blk_underruns %
 					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
@@ -699,7 +832,13 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 				ret = alt_buffer_get((void **)&tx_buf);
 				ERR_CHK(ret);
 
-				memset(tx_buf, 0, BLK_STEREO_SIZE_OCTETS);
+				if (first_mute_blk) {
+					memcpy(tx_buf, last_played_blk, BLK_STEREO_SIZE_OCTETS);
+					fade_block((int16_t *)tx_buf, false);
+					fade_in_pending = true;
+				} else {
+					memset(tx_buf, 0, BLK_STEREO_SIZE_OCTETS);
+				}
 			}
 
 			if (tone_active) {
@@ -1004,10 +1143,12 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size)
 	// pcm_size = BLK_STEREO_SIZE_OCTETS * NUM_BLKS_IN_FRAME;
 	/*** Add audio data to FIFO buffer ***/
 
-	int32_t num_blks_in_fifo = ctrl_blk.out.prod_blk_idx - ctrl_blk.out.cons_blk_idx;
-	// FIFO_NUM_BLKS = 120
-	// NUM_BLKS_IN_FRAME = 10
-	if ((num_blks_in_fifo + NUM_BLKS_IN_FRAME) > FIFO_NUM_BLKS) {
+	/* Wrap-safe: a plain index subtraction reads negative once prod_blk_idx has
+	 * wrapped past cons_blk_idx, which would wave a genuine overrun through.
+	 * Must be >=: a fill of exactly FIFO_NUM_BLKS aliases to prod == cons, which
+	 * reads back as empty and silently discards a whole buffer of audio.
+	 */
+	if ((out_fifo_fill_blks() + NUM_BLKS_IN_FRAME) >= FIFO_NUM_BLKS) {
 		LOG_WRN("Output audio stream overrun - Discarding audio frame");
 
 		/* Discard frame to allow consumer to catch up */
