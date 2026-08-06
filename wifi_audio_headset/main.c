@@ -25,6 +25,7 @@
 #include "socket_utils.h"
 #include "wifi_audio_rx.h"
 #include "hw_codec.h"
+#include "audio_led.h"
 #include <zephyr/logging/log.h>
 
 #ifdef CONFIG_HEAPS_MONITOR
@@ -61,6 +62,52 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 
 static enum stream_state strm_state = STATE_PAUSED;
 
+/**
+ * @brief Drive the Audio Streaming LED (FR-015) from stream intent and actual
+ *        playback activity. See src/modules/audio_led/audio_led.c.
+ *
+ * Three states, deduped so a steady-state poll doesn't restart the blink
+ * effect every tick:
+ *   - STATE_PAUSED (pause command sent)                -> Solid OFF
+ *   - STATE_STREAMING but not actually playing (stalled,
+ *     jitter buffer refilling/dry, play command sent)  -> Solid ON
+ *   - STATE_STREAMING and audio_datapath_is_playing()   -> Blink
+ */
+static enum { AUDIO_LED_TRI_OFF, AUDIO_LED_TRI_ON, AUDIO_LED_TRI_BLINK } audio_led_tri_last =
+	AUDIO_LED_TRI_OFF;
+
+static void audio_stream_led_update(void)
+{
+	bool streaming_intent = (strm_state == STATE_STREAMING);
+	bool streaming_active = streaming_intent && audio_datapath_is_playing();
+	__typeof__(audio_led_tri_last) new_state =
+		streaming_active ? AUDIO_LED_TRI_BLINK
+				  : (streaming_intent ? AUDIO_LED_TRI_ON : AUDIO_LED_TRI_OFF);
+
+	if (new_state == audio_led_tri_last) {
+		return;
+	}
+
+	audio_led_tri_last = new_state;
+	audio_led_update(streaming_active, streaming_intent);
+}
+
+/* Poll audio_datapath_is_playing() since it can change (jitter buffer
+ * dry/refill) without any stream_state_set() call to hook into.
+ */
+#define AUDIO_LED_POLL_PERIOD_MS 200
+
+static struct k_work_delayable audio_led_poll_work;
+
+static void audio_led_poll_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	audio_stream_led_update();
+
+	k_work_reschedule(&audio_led_poll_work, K_MSEC(AUDIO_LED_POLL_PERIOD_MS));
+}
+
 /* Forward declaration */
 static void stream_state_set(enum stream_state stream_state_new);
 
@@ -78,6 +125,7 @@ static void stream_state_set(enum stream_state stream_state_new)
 {
 	LOG_INF("Stream state changed from %d to %d", strm_state, stream_state_new);
 	strm_state = stream_state_new;
+	audio_stream_led_update();
 }
 
 uint8_t stream_state_get(void)
@@ -425,6 +473,9 @@ int main(void)
 	k_work_init_delayable(&stream_watchdog_work, stream_watchdog_handler);
 	k_work_reschedule(&stream_watchdog_work, K_SECONDS(STREAM_WATCHDOG_PERIOD_SEC));
 #endif
+
+	k_work_init_delayable(&audio_led_poll_work, audio_led_poll_handler);
+	k_work_reschedule(&audio_led_poll_work, K_MSEC(AUDIO_LED_POLL_PERIOD_MS));
 
 	return 0;
 }

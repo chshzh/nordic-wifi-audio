@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-12-20 |
-| PRD Version | 2026-08-04-10-56 |
+| Version | 2026-08-06-19-35 |
+| PRD Version | 2026-08-06-19-00 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | Implemented — long-press override only (everything else owned by `zego/bricks/ux`) |
@@ -15,6 +15,8 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-19-35 | FR-015 hardware-test fix: the Headset LED was blinking even while no audio was actually flowing (command-driven `stream_state` says STREAMING while the gateway is stalled/paused). Headset now tracks a 3rd state using a new `audio_datapath_is_playing()` getter, polled every 200 ms (`audio_led_poll_work`) since playback activity changes inside the I2S callback, not through `stream_state_set()`: Solid OFF (pause sent) / Solid ON (play sent, not actually playing yet) / Blink (actually playing). Also corrected this doc: `src/modules/audio_led/audio_led.c` is **not** a separate `zephyr_library_named(...)` like `ux.c` — a real build showed that pattern never links into the final image from application-mode CMake, so it's compiled straight into `app`, with the `<led.h>` collision resolved via a `configure_file()`-generated wrapper header instead. |
+| 2026-08-06-19-05 | FR-015: added `src/modules/audio_led/` — a second, audio-specific LED (idx 1 on nRF7002DK/nRF54LM20DK, idx 6 on nRF5340 Audio DK) driven by `audio_led_update(streaming, usb_active)`, called from both apps' `stream_state_set()`. Also renamed LED 0 from "Wi-Fi / audio connection state" to **Wi-Fi / Network Status LED** (FR-007) — documentation-only clarification, since LED 0 was already driven purely by `net_event_app.c`'s network hooks, never by `stream_state`. See "Audio Streaming LED (FR-015)" section below. |
 | 2026-08-04-12-20 | **Bug fix (found via hardware test):** on nRF5340 Audio DK, `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` was left at its default (0) while `CONFIG_ZEGO_UX_BUTTON_IDX` is 4 (BTN5) — the 10 s hold on BTN5 never triggered factory reset (see [board-init-module.md](board-init-module.md) Changelog for the fix). nRF7002DK and nRF54LM20DK were unaffected (both use idx 0 for everything, so the default already matched). |
 | 2026-08-04-10-58 | FR-014: enabled `CONFIG_ZEGO_BUTTON_LONGER_PRESS_MS=10000` so the mode-control button carries a second hold tier (`zego/bricks/factory_reset`, `CONFIG_ZEGO_FACTORY_RESET=y`). The existing 3 s mode-cycle long-press override (`zego_ux_on_long_press()`, unchanged) is now "guarded": it fires at release if released before 10 s, and is superseded by a factory reset if the hold continues to 10 s. See `zego/bricks/button/docs/button-spec.md` ("Two-Tier Hold Gesture") and [0-overview.md](0-overview.md). |
 | 2026-07-31-14-13 | **Rewrite for the NCS v3.4.0 migration — not a duplicate of `zego/bricks/ux`'s own spec.** `zego/bricks/ux` (zego v3.4.0.2) now owns button gesture dispatch, the LED 0 Wi-Fi state machine, and the startup banner outright — all previously app-owned in `src/modules/ux/ux.c`. This app keeps exactly one strong override, `zego_ux_on_long_press()`, because the brick's default long-press cycle includes SoftAP and this project deliberately excludes it (P2P_GO already covers the zero-infrastructure role). Full generic behavior (LED state diagram, Kconfig reference, banner mechanics, single-click, double-click) is documented once in [zego/bricks/ux/docs/ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md) and not restated here. |
@@ -31,8 +33,11 @@ Button gestures, the LED 0 Wi-Fi state machine, and the startup banner
 [ux-spec.md](../../../zego/bricks/ux/docs/ux-spec.md).
 
 `src/modules/network/net_event_app.c` publishes `ZEGO_UX_WIFI_STATE_CHAN` on
-connectivity changes to drive the brick's LED state machine — see
-[network-module.md](network-module.md) for those hooks.
+connectivity changes to drive the brick's LED 0 (Wi-Fi / Network Status) state
+machine — see [network-module.md](network-module.md) for those hooks. LED 0's
+states (ROTATE / Solid ON / Fast BLINK) reflect Wi-Fi connectivity only —
+DHCP-bound, disconnect, and last-AP-client-left events — never `stream_state`;
+audio state is shown on the separate Audio Streaming LED below (FR-015).
 
 Custom `src/modules/button_handler.c` and `src/modules/led.c` were retired in Step 3.5
 (pre-v3.4.0). The transition-proxy headers `src/modules/ux/{Kconfig,button.h,led.h,wifi.h}`
@@ -47,18 +52,104 @@ kept for I2S audio channel selection.
 src/modules/ux/
 ├── ux.c          — single override: zego_ux_on_long_press() (mode cycle)
 └── CMakeLists.txt
+
+src/modules/audio_led/
+├── audio_led.h   — audio_led_update(streaming, usb_active)
+├── audio_led.c   — LED index selection + LED_CMD_CHAN publish (FR-015)
+└── CMakeLists.txt
 ```
 
-`ux.c` is built as its **own `zephyr_library_named(app_ux)`**, not compiled directly
-into `app`. This is a header-resolution workaround, not a design choice: the app's own
-private include path puts `src/modules` (which still holds the legacy nRF5340 Audio DK
-`led.h`, used elsewhere for on-board hardware LED color constants) ahead of the zego
-brick's `<led.h>`/`<ux.h>`. A separate library sees only the global brick include
-directories, so the angle-bracket includes resolve to the zego headers. See
-`src/modules/ux/CMakeLists.txt` for the full rationale, including the
-`add_dependencies(app_ux zephyr_generated_headers)` needed because Zephyr only wires
-that dependency up automatically for libraries registered before `find_package(Zephyr)`
-returns.
+`ux.c` is built as its **own `zephyr_library_named(...)`**, not compiled directly
+into `app`. This is a header-resolution workaround, not a design choice: the app's
+own private include path puts `src/modules` (which still holds the legacy nRF5340
+Audio DK `led.h`, used elsewhere for on-board hardware LED color constants) ahead
+of the zego brick's `<led.h>`/`<ux.h>`. A separate library sees only the global
+brick include directories, so the angle-bracket includes resolve to the zego
+headers. See `src/modules/ux/CMakeLists.txt` for the full rationale, including the
+`add_dependencies(app_ux zephyr_generated_headers)` needed because Zephyr only
+wires that dependency up automatically for libraries registered before
+`find_package(Zephyr)` returns.
+
+`audio_led.c` hits the same `<led.h>` collision but is compiled straight into
+`app` (via `target_sources(app ...)`) rather than as a separate library: a real
+build showed `zephyr_library_named(...)` in application-mode CMake never gets
+added to Zephyr's whole-archive link list, so its objects compiled but were never
+linked (`undefined reference`). Instead, `CMakeLists.txt` uses `configure_file()`
+to generate `zego_led_include.h`, a wrapper that `#include`s the zego led brick's
+header via its CMake-resolved absolute path — sidestepping `-I` search order
+entirely instead of depending on library separation.
+
+---
+
+## Audio Streaming LED (FR-015)
+
+A second LED, independent of LED 0 (Wi-Fi / Network Status), shows USB audio
+source and streaming activity:
+
+| Board | LED idx |
+|---|---|
+| nRF7002DK, nRF54LM20DK + nRF7002EB2 | 1 |
+| nRF5340 Audio DK + nRF7002EK (gateway and headset) | 6 |
+
+Both apps call `audio_led_update(bool streaming, bool usb_active)` (declared in
+`src/modules/audio_led/audio_led.h`) every time `stream_state_set()` runs, so the
+LED always reflects the freshest state without a separate polling path:
+
+```c
+void audio_led_update(bool streaming, bool usb_active)
+{
+	if (streaming) {
+		/* BLINK — actively streaming to a connected peer, wins over usb_active */
+	} else if (usb_active) {
+		/* Solid ON — USB host audio available, not yet streaming */
+	} else {
+		/* Solid OFF — no USB host audio */
+	}
+}
+```
+
+**Gateway** (`wifi_audio_gateway/main.c`): `usb_active` is
+`audio_usb_host_audio_active()` (see [audio-pipeline.md](audio-pipeline.md)).
+Called from `stream_state_set()` itself (covers button play/pause,
+`AUDIO_START_CMD`/`AUDIO_STOP_CMD`, and client-disconnect paths) **and** once
+more, unconditionally, at the end of `streamctrl_handle_usb_audio_active()` —
+the latter is needed because that function can change `usb_active` without
+calling `stream_state_set()` when no client is connected yet (early-return
+guard), and the LED must still reflect the fresh USB signal in that case.
+
+**Headset** (`wifi_audio_headset/main.c`): audio commands only convey intent, not
+whether audio is actually arriving/playing — hardware testing showed the LED
+blinking while the gateway was stalled and no audio was flowing. The headset
+therefore tracks a 3-way state instead of calling `audio_led_update()` straight
+from `stream_state_set()`:
+
+```c
+bool streaming_intent = (strm_state == STATE_STREAMING);
+bool streaming_active = streaming_intent && audio_datapath_is_playing();
+/* streaming_active -> Blink, else streaming_intent -> Solid ON, else Solid OFF */
+audio_led_update(streaming_active, streaming_intent);
+```
+
+`audio_datapath_is_playing()` (new getter in `audio_datapath.c`, returns
+`ctrl_blk.out.playing`) reflects real I2S output activity with the same
+prebuffer/mute hysteresis the drift compensator already relies on (see
+[audio-pipeline.md](audio-pipeline.md)) — it goes false while the jitter buffer
+is refilling or ran dry, even though `stream_state` is still STREAMING. Since
+that signal changes inside the I2S callback (not through `stream_state_set()`),
+a `k_work_delayable` (`audio_led_poll_work`, 200 ms period) re-evaluates it
+periodically; a dedup check (`audio_led_tri_last`) skips the `audio_led_update()`
+call when the 3-way state hasn't changed, so the LED effect isn't restarted every
+tick.
+
+### Test Points
+
+| UART observation | Expected condition |
+|---|---|
+| Gateway audio LED solid ON, no client connected | USB host is sending audio, no headset streaming yet |
+| Gateway audio LED blinking | `stream_state_get() == STATE_STREAMING` |
+| Headset audio LED solid ON | Play command sent (`stream_state == STATE_STREAMING`) but `audio_datapath_is_playing()` is false (stalled/buffering) |
+| Headset audio LED blinking | `audio_datapath_is_playing()` is true — audio is actually being output |
+| LED 0 state unaffected by any of the above | Confirms LED 0 remains Wi-Fi/Network-only (FR-007) |
 
 ---
 

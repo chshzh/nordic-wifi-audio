@@ -29,7 +29,7 @@
 - **Analog audio source** — Gateway can capture analog audio via `overlay-gateway-linein.conf` on nRF5340 Audio DK.
 - **Runtime mode switching** — Wi-Fi control button long press (≥ 3 s) cycles Wi-Fi mode and reboots; mode persists in NVS flash.
 - **Factory reset** — hold the Wi-Fi control button for ≥ 10 s (or run the `zego_factory_reset` shell command) to erase stored Wi-Fi credentials, the saved Wi-Fi mode, and the P2P GO MAC, then reboot the device back to its just-flashed state; provided by **[zego/factory_reset](https://github.com/chshzh/zego/blob/main/bricks/factory_reset/docs/factory-reset-spec.md)**
-- **Visual status feedback** — LED rotates while connecting, solid ON during active audio link, fast blink on error.
+- **Visual status feedback** — LED 0 (Wi-Fi / Network Status) rotates while connecting, solid ON when Wi-Fi is connected/ready, fast blink on error; a separate Audio Streaming LED shows USB audio availability and streaming activity.
 - **Startup banner** — prints firmware version, board, role, Wi-Fi mode, and connection instructions at every boot.
 
 ### Target Users
@@ -79,7 +79,7 @@ Mode: P2P_GO  |  Modules: [wifi] [network] [ux] [button] [led]
 P2P_GO: DIRECT-xx started — Headset will auto-connect via static P2P link
 ```
 
-LED 0 begins rotating. Mode-specific connection:
+LED 0 (Wi-Fi / Network Status) begins rotating. Mode-specific connection:
 
 - **P2P mode** (default on fresh flash): Gateway boots as P2P_GO; Headset boots as P2P_GC. They pair automatically — wait for both to log `Audio stream READY` and LED 0 to go solid ON.
 - **STA mode**: run `wifi cred add -s <SSID> -p <pass> -k 1` then `wifi cred auto_connect` on both devices; both join the same AP; wait for `Audio stream READY`.
@@ -122,20 +122,23 @@ Factory reset is also available as the `zego_factory_reset
 
 ### LEDs
 
-LED 0 reflects the Wi-Fi / audio link state. All other LEDs are available for application use.
+LED 0 reflects Wi-Fi / network connection status only — it does not indicate
+any audio state. A second, audio-specific LED (idx 1 or idx 6, board-dependent)
+shows USB source / streaming activity. All remaining LEDs are available for
+application use.
 
-| Board | LED 0 (idx 0) | Other LEDs |
-|-------|---------------|------------|
-| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/audio state | RGB2 (idx 3–5) — role indicator (see below); LED1–3 (idx 6–8) — free |
-| nRF7002DK | LED1 — Wi-Fi / audio state | LED2 (idx 1) — free |
-| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / audio state | LED1–3 (idx 1–3) — free |
+| Board | Wi-Fi / Network Status LED | Audio Streaming Status LED | Other LEDs |
+|-------|------------------------------------------|----------------------|------------|
+| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB2 (idx 3–5) — role indicator (see below); LED2–3 (idx 7–8) — free |
+| nRF7002DK | LED1 — Wi-Fi / network status | LED2 (idx 1) | — |
+| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / network status | LED1 (idx 1) | LED2–3 (idx 2–3) — free |
 
-nRF5340 Audio DK + nRF7002EK — RGB1 state effects:
+nRF5340 Audio DK + nRF7002EK — RGB1 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |-------|--------|
 | Boot / connecting | RGB1 ROTATE (all three channels) |
-| Audio link active | RGB1 Green — Solid ON |
+| Wi-Fi connected / ready | RGB1 Green — Solid ON |
 | Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
 
 nRF5340 Audio DK + nRF7002EK — RGB2 role indicator (solid, set at boot):
@@ -145,13 +148,29 @@ nRF5340 Audio DK + nRF7002EK — RGB2 role indicator (solid, set at boot):
 | Gateway | Blue |
 | Headset | Green |
 
-nRF7002DK and nRF54LM20DK + nRF7002EB2 — LED 0 state effects:
+nRF7002DK and nRF54LM20DK + nRF7002EB2 — LED 0 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |-------|--------|
 | Boot / connecting | ROTATE |
-| Audio link active | Solid ON |
+| Wi-Fi connected / ready | Solid ON |
 | Error / disconnected | Fast BLINK (100 ms half-period) |
+
+Audio Streaming LED (idx 1 or idx 6, board-dependent) — Gateway:
+
+| State | Effect |
+|-------|--------|
+| USB host audio available, not yet streaming to a headset | Solid ON |
+| No USB host audio | Solid OFF |
+| Actively streaming to a connected headset | Blinking |
+
+Audio Streaming LED (idx 6, nRF5340 Audio DK only) — Headset:
+
+| State | Effect |
+|-------|--------|
+| Pause command sent | Solid OFF |
+| Play command sent, no audio actually flowing yet (stalled/buffering) | Solid ON |
+| Audio actually playing | Blinking |
 
 **3. Application logic**
 

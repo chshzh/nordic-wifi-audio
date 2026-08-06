@@ -34,6 +34,15 @@ struct usbd_context *audio_usbd_init_device(usbd_msg_cb_t msg_cb);
  */
 int audio_usb_start(struct data_fifo *fifo_tx_in, struct data_fifo *fifo_rx_in);
 
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+/**
+ * @brief Whether the USB host is currently sending non-silent audio.
+ *
+ * @return true if host audio is active, false if the host is idle/silent.
+ */
+bool audio_usb_host_audio_active(void);
+#endif
+
 /**
  * @brief Stop sending/receiving data
  *

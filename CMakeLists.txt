@@ -83,6 +83,7 @@ zephyr_library_include_directories(
         src/modules/network
         src/drivers
         src/modules
+        src/modules/audio_led
         src/utils
         src/utils/macros
         src/debug
@@ -101,6 +102,7 @@ add_subdirectory(src/utils)
 # network module: zego/network weak-hook overrides (net_event_app.c) + UDP transport (socket_utils.c)
 add_subdirectory(src/modules/network)
 add_subdirectory(src/modules/ux)
+add_subdirectory(src/modules/audio_led)
 
 ## Cirrus Logic
 if (CONFIG_HW_CODEC_CIRRUS_LOGIC)

@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-08-04-10-56 |
+| Version | 2026-08-06-19-30 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
@@ -18,6 +18,9 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-19-30 | Refined FR-015's Headset LED (idx 6) to a 3rd state, based on hardware log evidence: the headset was blinking even while no audio was actually flowing (stalled on the gateway side, jitter buffer empty), because "streaming" only reflected command intent, not real playback. Now: Solid OFF once a pause command is sent; Solid ON once a play command is sent but audio isn't flowing yet (stalled/buffering); Blinking only while audio is actually playing. Gateway LED behavior (idx 1 / idx 6) is unchanged. |
+| 2026-08-06-19-00 | Renamed LED 0 from "Wi-Fi / audio connection state" to **Wi-Fi / Network Status LED** (FR-007) — its states (ROTATE / Solid ON / Fast BLINK) now describe network connectivity only, not any audio condition; "Audio link active" → "Wi-Fi connected / ready". This is a documentation/naming clarification only — LED 0 was already driven purely by `net_event_app.c`'s network hooks (DHCP bound, disconnect, last AP client left), never by `stream_state`, so no behavior changed. Removes ambiguity now that FR-015 owns audio-state indication on its own dedicated LED. |
+| 2026-08-06-18-00 | Added FR-015 (P1): a second, audio-specific LED (separate from the existing LED 0 Wi-Fi/audio-link indicator) shows USB source and streaming activity at a glance. Gateway: LED idx 1 (nRF7002DK, nRF54LM20DK + nRF7002EB2) / idx 6 (nRF5340 Audio DK) — Solid ON when USB host audio is available, Solid OFF when no USB audio, Blinking while audio is actively streaming to a connected headset. Headset (nRF5340 Audio DK only): LED idx 6 — Blinking while streaming, Solid OFF otherwise. Both chosen indices were already listed as free in §2.4 and don't collide with LED 0 or the RGB2 role indicator. |
 | 2026-08-04-10-56 | Added FR-014 (P1): factory reset via a mode-button hold (≥ 10 s) or the `zego_factory_reset` shell command — erases stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboots to the fresh-flash state. `zego` bumped v3.4.0.2→v3.4.0.3 (adds `zego/bricks/factory_reset`). The 10 s hold is deliberately distinct from the existing 3 s mode-cycle gesture (FR-006) on the same button: the 3 s gesture now fires only on release when released before 10 s (guarded), and is superseded by the 10 s hold. Added a new row to the §2.4 button table for each board. |
 | 2026-07-31-14-13 | Migrated to NCS v3.4.0 (from v3.3.0); adopted zego v3.4.0.2's `zego/bricks/ux` (button gestures, LED state machine, and startup banner now brick-owned — replaces the local ux module). P2P_GC pairing changed from a compile-time gateway MAC (`CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC`, removed by zego) to runtime pairing: a fresh Headset boots idle in P2P_GC, a **double-click** on the mode button runs WPS PBC discovery and joins the pairing Gateway, and the learned MAC persists to NVS for automatic reconnect on later boots/power cycles. Added FR-013 for this pairing gesture; updated FR-004 and FR-006 to match. No change to audio transport, latency, or board support. |
 | 2026-06-26-11-29 | HW-validation correction: nRF54LM20DK runs UAC2 at **Full-Speed**, not High-Speed — HS enumeration broke the USB audio stream on macOS hosts (iso-OUT continuously cancelled). All boards now UAC2 @ Full-Speed; the per-board lower-latency HS benefit noted in the 09-55 entry does not apply and is deferred to future work. |
@@ -124,28 +127,31 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 
 ### LEDs
 
-LED 0 reflects the Wi-Fi / audio connection state. All other LEDs are available for application use.
+LED 0 reflects Wi-Fi / network connection status only — it no longer indicates
+any audio state. A second, audio-specific LED (idx 1 or idx 6, board-dependent
+— see FR-015) shows USB source / streaming activity. All remaining LEDs are
+available for application use.
 
-| Board | LED 0 (idx 0) | Other LEDs |
-|---|---|---|
-| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/audio state | RGB2 (idx 3–5) — role indicator (see below); LED1–3 (idx 6–8) — free |
-| nRF7002DK | LED1 — Wi-Fi / audio state | LED2 (idx 1) — free |
-| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / audio state | LED1–3 (idx 1–3) — free |
+| Board | LED 0 (idx 0) — Wi-Fi / Network Status | Audio Streaming LED (FR-015) | Other LEDs |
+|---|---|---|---|
+| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB2 (idx 3–5) — role indicator (see below); LED2–3 (idx 7–8) — free |
+| nRF7002DK | LED1 — Wi-Fi / network status | LED2 (idx 1) | — |
+| nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / network status | LED1 (idx 1) | LED2–3 (idx 2–3) — free |
 
-nRF7002DK and nRF54LM20DK + nRF7002EB2 LED 0 state effects:
+nRF7002DK and nRF54LM20DK + nRF7002EB2 LED 0 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |---|---|
 | Boot / connecting | ROTATE |
-| Audio link active | Solid ON |
+| Wi-Fi connected / ready | Solid ON |
 | Error / disconnected | Fast BLINK (100 ms half-period) |
 
-nRF5340 Audio DK + nRF7002EK RGB1 state effects:
+nRF5340 Audio DK + nRF7002EK RGB1 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |---|---|
 | Boot / connecting | RGB1 ROTATE (all three channels) |
-| Audio link active | RGB1 Green — Solid ON |
+| Wi-Fi connected / ready | RGB1 Green — Solid ON |
 | Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
 
 nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
@@ -154,6 +160,22 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 |---|---|
 | Gateway | Blue |
 | Headset | Green |
+
+Audio Streaming LED (FR-015) state effects — Gateway (idx 1 or idx 6, board-dependent):
+
+| State | Effect |
+|---|---|
+| USB host audio available, not yet streaming to a headset | Solid ON |
+| No USB host audio | Solid OFF |
+| Actively streaming to a connected headset | Blinking |
+
+Audio Streaming LED (FR-015) state effects — Headset (idx 6, nRF5340 Audio DK only):
+
+| State | Effect |
+|---|---|
+| Pause command sent | Solid OFF |
+| Play command sent, no audio actually flowing yet (stalled/buffering) | Solid ON |
+| Audio actually playing | Blinking |
 
 ### 2.5 Audio I/O
 
@@ -190,9 +212,10 @@ nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
 |---|---|---|---|---|---|
 | FR-005 | developer | have both devices optionally join an existing Wi-Fi network and auto-discover each other | I can evaluate the demo in an infrastructure environment | STA mode enabled via overlay or long-press mode cycle; Gateway advertises `audiogateway.local` via mDNS; Headset resolves and connects within 10 s of both devices joining; Opus overlay is valid in STA mode only | [network-module.md](../dev-specs/network-module.md) |
 | FR-006 | user | control the device with physical buttons | the demo does not require a serial terminal | Mode button single click = print Wi-Fi mode to UART; double-click = trigger WPS PBC pairing in P2P modes (see FR-013); long press ≥ 3 s = cycle mode + reboot; Button 1 (headset) = Volume Up; Button 2 = Play/Pause; Button 3 = test tone; all actions debounced and reliable across all supported boards | [ui-module.md](../dev-specs/ui-module.md) |
-| FR-007 | user | have LEDs reflect the device state | the demo is self-explanatory without a serial monitor | Rotate while connecting; solid ON when audio link established; fast blink on error / disconnected; consistent across all boards | [ui-module.md](../dev-specs/ui-module.md) |
+| FR-007 | user | have LEDs reflect the device state | the demo is self-explanatory without a serial monitor | LED 0 (Wi-Fi / Network Status): Rotate while connecting; solid ON when Wi-Fi is connected/ready; fast blink on error / disconnected; consistent across all boards; does not reflect audio streaming state (see FR-015) | [ui-module.md](../dev-specs/ui-module.md) |
 | FR-008 | developer | have the Gateway accept USB audio input | any computer can feed audio into the demo without hardware modification | Gateway presents as a UAC2 (USB Audio Class 2.0) device (headset composite), class-native on Windows 10+/macOS/Linux; PC microphone audio streams over Wi-Fi; received Wi-Fi audio plays on USB headphones | [board-init-module.md](../dev-specs/board-init-module.md) |
 | FR-014 | developer | factory-reset the device back to its as-flashed state | I can recover a misconfigured device or hand it off clean without reflashing | Holding the mode button for ≥ 10 s, or running the `zego_factory_reset` shell command, erases stored Wi-Fi credentials, the saved Wi-Fi mode, and the learned P2P GO MAC, then reboots; the 10 s hold is distinct from the existing 3 s mode-cycle gesture (FR-006) on the same button — releasing before 10 s still cycles the mode (now at release instead of immediately), holding to 10 s supersedes it and performs the reset instead | [ui-module.md](../dev-specs/ui-module.md), [zego/factory_reset ↗](https://github.com/chshzh/zego/blob/main/bricks/factory_reset/docs/factory-reset-spec.md) |
+| FR-015 | user | see USB audio availability and streaming activity on a dedicated LED | I can tell at a glance whether audio is available from the PC and whether it's actually flowing to a headset, without a serial monitor | Gateway: LED idx 1 (nRF7002DK, nRF54LM20DK + nRF7002EB2) / idx 6 (nRF5340 Audio DK) — Solid ON when USB host audio is available but not yet streaming, Solid OFF when no USB host audio, Blinking while actively streaming to a connected headset. Headset (nRF5340 Audio DK only): LED idx 6 — Blinking while audio is actually playing; Solid ON while a play command was sent but no audio is flowing yet (stalled/buffering); Solid OFF once a pause command was sent. Distinct from and independent of LED 0 (Wi-Fi / Network Status, FR-007), which no longer reflects audio state | [ui-module.md](../dev-specs/ui-module.md), [audio-pipeline.md](../dev-specs/audio-pipeline.md) |
 
 ### P2 — Nice to Have
 

@@ -6,6 +6,7 @@
 
 #include "audio_usb.h"
 
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_uac2.h>
@@ -13,6 +14,9 @@
 #include <data_fifo.h>
 
 #include "macros_common.h"
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+#include "streamctrl.h"
+#endif
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(audio_usb, CONFIG_MODULE_AUDIO_USB_LOG_LEVEL);
@@ -59,6 +63,65 @@ static bool tx_first_data;
 static bool terminal_in_enabled;
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+/* Host audio-activity detection — treats sustained near-silence in the USB OUT
+ * PCM stream as "host stopped playing" so the Wi-Fi stream can be paused
+ * instead of forwarding silence indefinitely, and resumed as soon as real
+ * audio returns. One data_recv_cb call carries ~1 ms of audio, so the block
+ * count below doubles as a millisecond count.
+ */
+#define HOST_SILENCE_AMPLITUDE  32   /* samples at/below this magnitude count as silence */
+#define HOST_SILENCE_TIMEOUT_MS 1000 /* consecutive silent ms before pausing the stream */
+
+static bool host_audio_active = true;
+static uint32_t host_silent_ms;
+
+static void host_audio_set_active(bool active)
+{
+	if (host_audio_active == active) {
+		return;
+	}
+
+	host_audio_active = active;
+	host_silent_ms = 0;
+	streamctrl_handle_usb_audio_active(active);
+}
+
+static void host_audio_activity_check(const void *buf, size_t size)
+{
+	if (CONFIG_AUDIO_BIT_DEPTH_BITS != 16) {
+		/* Silence detection only implemented for 16-bit PCM. */
+		return;
+	}
+
+	const int16_t *samples = buf;
+	size_t num_samples = size / sizeof(int16_t);
+	bool silent = true;
+
+	for (size_t i = 0; i < num_samples; i++) {
+		if (abs(samples[i]) > HOST_SILENCE_AMPLITUDE) {
+			silent = false;
+			break;
+		}
+	}
+
+	if (!silent) {
+		host_silent_ms = 0;
+		host_audio_set_active(true);
+		return;
+	}
+
+	if (host_audio_active && ++host_silent_ms >= HOST_SILENCE_TIMEOUT_MS) {
+		host_audio_set_active(false);
+	}
+}
+
+bool audio_usb_host_audio_active(void)
+{
+	return host_audio_active;
+}
+#endif /* CONFIG_SOCKET_ROLE_SERVER */
+
 static void terminal_update_cb(const struct device *dev, uint8_t terminal, bool enabled,
 			       bool microframes, void *user_data)
 {
@@ -68,6 +131,14 @@ static void terminal_update_cb(const struct device *dev, uint8_t terminal, bool 
 
 	if (terminal == TERMINAL_ID_OUT) {
 		terminal_out_enabled = enabled;
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+		if (!enabled) {
+			/* Host closed the OUT stream entirely — a stronger signal than
+			 * silence, so stop the Wi-Fi stream immediately.
+			 */
+			host_audio_set_active(false);
+		}
+#endif
 	}
 #if (CONFIG_STREAM_BIDIRECTIONAL)
 	else if (terminal == TERMINAL_ID_IN) {
@@ -125,6 +196,10 @@ static void data_recv_cb(const struct device *dev, uint8_t terminal, void *buf, 
 		k_mem_slab_free(&usb_rx_slab, buf);
 		return;
 	}
+
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+	host_audio_activity_check(buf, size);
+#endif
 
 	ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
 

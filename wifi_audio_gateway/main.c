@@ -21,11 +21,14 @@
 #include "macros_common.h"
 #include "audio_system.h"
 #include "audio_datapath.h"
+#include "audio_usb.h"
+#include "net_event_app.h"
 
 #include <ux.h> /* zego ux brick: zego_ux_print_banner() */
 #include "streamctrl.h"
 #include "socket_utils.h"
 #include "wifi_audio_rx.h"
+#include "audio_led.h"
 
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
@@ -37,6 +40,10 @@
 LOG_MODULE_REGISTER(MODULE, CONFIG_MAIN_LOG_LEVEL);
 
 extern volatile bool socket_connected_signall;
+
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+static void audio_stream_led_update(void);
+#endif
 
 ZBUS_SUBSCRIBER_DEFINE(button_evt_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
 
@@ -58,10 +65,28 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 
 static enum stream_state strm_state = STATE_PAUSED;
 
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+/* Set on an explicit pause (button or AUDIO_STOP_CMD), cleared on an explicit
+ * play (button or AUDIO_START_CMD). Distinguishes that from an auto-pause due
+ * to USB host idle, so streamctrl_handle_usb_audio_active() only auto-resumes
+ * the latter — an explicit pause must stay paused until the user asks again,
+ * even if USB audio starts flowing in the meantime.
+ */
+static bool stream_paused_by_user;
+
+/* Dedups "USB host idle, staying paused" so repeated AUDIO_START_CMD retries
+ * (from the headset's stream watchdog) don't spam the log every 5 s.
+ */
+static bool usb_idle_start_cmd_logged;
+#endif
+
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
 {
 	strm_state = stream_state_new;
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+	audio_stream_led_update();
+#endif
 }
 
 uint8_t stream_state_get(void)
@@ -70,8 +95,19 @@ uint8_t stream_state_get(void)
 }
 
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
+/**
+ * @brief Drive the Audio Streaming LED (FR-015) from the current stream state
+ *        and USB host audio activity. See src/modules/audio_led/audio_led.c.
+ */
+static void audio_stream_led_update(void)
+{
+	audio_led_update(strm_state == STATE_STREAMING, audio_usb_host_audio_active());
+}
+
 void streamctrl_handle_client_disconnect(void)
 {
+	stream_paused_by_user = false;
+
 	if (strm_state != STATE_STREAMING) {
 		return;
 	}
@@ -79,6 +115,31 @@ void streamctrl_handle_client_disconnect(void)
 	LOG_INF("Station disconnected, pausing audio stream");
 	audio_system_encoder_stop();
 	stream_state_set(STATE_PAUSED);
+}
+
+void streamctrl_handle_usb_audio_active(bool active)
+{
+	if (socket_connected_signall) {
+		if (active && strm_state != STATE_STREAMING && !stream_paused_by_user) {
+			LOG_INF("USB host audio detected, resuming stream");
+			stream_state_set(STATE_STREAMING);
+			audio_system_encoder_start();
+		} else if (!active && strm_state == STATE_STREAMING) {
+			LOG_INF("USB host audio idle, pausing stream");
+			audio_system_encoder_stop();
+			stream_state_set(STATE_PAUSED);
+		}
+	}
+
+	if (active) {
+		usb_idle_start_cmd_logged = false;
+	}
+
+	/* Always refresh the LED, even with no client connected yet, so it
+	 * reflects USB availability as soon as it changes (stream_state_set()
+	 * above already refreshed it for the branches that changed state).
+	 */
+	audio_stream_led_update();
 }
 #endif
 
@@ -98,16 +159,41 @@ void socket_rx_handler(uint8_t *socket_rx_buf, size_t len)
 		    socket_rx_buf[len - 1] == END_SEQUENCE_2) {
 			uint8_t command = socket_rx_buf[3]; // Command byte (third byte)
 
+			net_event_app_client_seen();
+
 			switch (command) {
 			case AUDIO_START_CMD:
+				stream_paused_by_user = false;
+				if (!audio_usb_host_audio_active()) {
+					/* Client is asking to (re)start while the PC is not
+					 * playing anything. Stay paused; the USB
+					 * host-activity hook resumes once real audio
+					 * returns.
+					 */
+					if (!usb_idle_start_cmd_logged) {
+						LOG_INF("STATE_STREAMING Command received - USB "
+							"host idle, staying paused");
+						usb_idle_start_cmd_logged = true;
+					}
+					stream_state_set(STATE_PAUSED);
+					break;
+				}
+				usb_idle_start_cmd_logged = false;
 				LOG_INF("STATE_STREAMING Command received");
 				stream_state_set(STATE_STREAMING);
 				audio_system_encoder_start();
 				break;
 			case AUDIO_STOP_CMD:
+				stream_paused_by_user = true;
 				LOG_INF("STATE_PAUSED Command received");
 				audio_system_encoder_stop();
 				stream_state_set(STATE_PAUSED);
+				break;
+			case AUDIO_KEEPALIVE_CMD:
+				/* Nothing to do: simply receiving it has already refreshed
+				 * the peer address and connected flag in socket_utils.
+				 */
+				LOG_DBG("Keepalive received");
 				break;
 			default:
 				LOG_INF("Unknown command received: 0x%02X\n", command);
@@ -168,10 +254,12 @@ static void button_msg_sub_thread(void)
 				if (strm_state == STATE_STREAMING) {
 					audio_system_encoder_stop();
 					LOG_INF("STATE_PAUSED");
+					stream_paused_by_user = true;
 					stream_state_set(STATE_PAUSED);
 
 				} else if (strm_state == STATE_PAUSED) {
 					LOG_INF("STATE_STREAMING");
+					stream_paused_by_user = false;
 					stream_state_set(STATE_STREAMING);
 					audio_system_encoder_start();
 
@@ -370,6 +458,8 @@ int main(void)
 	LOG_INF("socket_utils_init");
 	ret = socket_utils_init();
 	ERR_CHK(ret);
+
+	net_event_app_init();
 
 	/* Network LED driven by zego/bricks/ux via ZEGO_UX_WIFI_STATE_CHAN
 	 * (ROTATE = connecting)
