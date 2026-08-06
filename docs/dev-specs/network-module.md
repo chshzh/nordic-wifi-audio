@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-13-08 |
+| Version | 2026-08-06-17-30 |
 | PRD Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
@@ -15,6 +15,8 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-17-30 | Implemented and hardware-validated the app-level client liveness eviction described as a planned mitigation in the previous entry (`net_event_app.c`: `net_event_app_init()` / `net_event_app_client_seen()`). Added the "Client Liveness Eviction (Gateway)" section below and updated the Known Limitation callout to reflect that this is now shipped, not future work. Measured recovery on hardware: ~20 s total (disconnect → WPS re-arm → reconnect → streaming resumed), down from 300 s+. |
+| 2026-08-06-15-00 | Added the "Wi-Fi Connection State Machine" section: a role-generic state diagram covering DISCONNECTED → CONNECTING → ASSOCIATED → READY, with the exact hook that fires each transition. Documents a hardware-tested finding: the nRF70 P2P_GO's station-inactivity accounting does not reset on real client traffic, so a live client can be spuriously disassociated (`reason=4`) — this is a pre-existing driver defect (see [zego/patches/hostap/README.md](../../../zego/patches/hostap/README.md) for the investigation), not something fixable from this app. |
 | 2026-08-04-13-08 | **Bug fix (found via hardware test):** the P2P_GO gateway's LED 0 stayed in ROTATE after a client connected. Root cause: this app's `zego_on_net_event_wifi_ap_sta_connected()` override only logged and never actually published `ZEGO_UX_WIFI_STATE_CONNECTED` (an incomplete edit predating this session), and separately, `zego/network`'s own `__weak` default for that hook hardcoded `.mode = ZEGO_WIFI_MODE_SOFTAP`. Fixed the mode field in the zego brick default (see `zego/bricks/network/docs/network-spec.md`) and **removed this app's override entirely** — the corrected brick default now covers both SoftAP and P2P_GO correctly, so no app-level workaround is needed. Corrected two stale claims below that predated this fix: `dhcp_bound()` does **not** fire for P2P_GO (only STA/P2P_GC) — P2P_GO's CONNECTED state comes solely from `ap_sta_connected()`. |
 | 2026-07-31-14-13 | Updated to PRD v2026-07-31-14-13 (NCS v3.4.0 / zego v3.4.0.2): `net_event_app.c` now publishes `ZEGO_UX_WIFI_STATE_CHAN` (brick-owned) instead of the app-owned `APP_WIFI_STATE_CHAN`, which no longer exists; `zego_on_net_event_wifi_disconnect()` gained a `bool will_retry` param (ignored — any disconnect still shows ERROR). Removed `CONFIG_ZEGO_WIFI_P2P_GC_TARGET_GO_MAC` (dropped by zego); added the FR-013 runtime WPS PBC pairing flow — see new "P2P Pairing Flow" section. |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: dual-mode firmware; P2P_GO DHCP server needs NET_MAX_CONN/CONTEXTS=8; P2P_GC auto-connect by exact GO MAC (not OUI); STA mDNS discovery via MDNS_RESPONDER (gateway) + MDNS_RESOLVER/DNS_SERVER_IP_ADDRESSES (headset); _nrfwifiaudio._udp.local service |
@@ -43,6 +45,75 @@ P2P_GO auto-start, P2P_GC peer scan and connect, DHCP, AP station tracking).
 The app provides application-specific behavior by overriding the brick's weak hooks.
 
 Custom `net_event_mgmt.c` and `wifi_utils.c` (SoftAP/mode logic) are retired.
+
+---
+
+## Wi-Fi Connection State Machine
+
+The states below are a role-generic summary of what `zego/network` tracks
+internally (P2P_GC's own retry FSM — pairing vs. reconnect, timeouts — is
+owned by the brick; see [network-spec.md](../../../zego/bricks/network/docs/network-spec.md)
+for that detail). What matters at the app level is which state transition
+fires which weak hook, since every hook below drives audio start/stop:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DISCONNECTED
+    DISCONNECTED --> CONNECTING : mode start\n(STA CONNECT_STORED / P2P_GC saved-GO reconnect\nor WPS pairing / P2P_GO GROUP_ADD)
+    CONNECTING --> CONNECTING : retry\n(STA: 2-5 s backoff; P2P_GC: 90 s cycle;\nsee network brick spec for why)
+    CONNECTING --> ASSOCIATED : L2 connect result success\n(zego_on_net_event_wifi_connect - not\noverridden by this app)
+    ASSOCIATED --> READY : STA/P2P_GC DHCP_BOUND, or\nP2P_GO first AP_STA_CONNECTED\n→ zego_on_net_event_dhcp_bound()\n→ pub CONNECTED, socket target set, audio unblocked
+    READY --> READY : P2P_GO: additional station joins/leaves\nwhile station_count > 0 (no hook fires)
+    READY --> DISCONNECTED : STA/P2P_GC link lost\n→ zego_on_net_event_wifi_disconnect()\n→ encoder stop + clear socket target + pub ERROR
+    READY --> DISCONNECTED : P2P_GO: last station leaves\n→ zego_on_net_event_wifi_ap_sta_disconnected(0)\n→ encoder stop + streamctrl_handle_client_disconnect()\n+ pub ERROR
+    DISCONNECTED --> CONNECTING : auto-retry (STA/P2P_GC) or\nWPS PBC re-armed, waiting for next client (P2P_GO)
+```
+
+> **⚠️ Known limitation (P2P_GO) — hardware-confirmed 2026-08-06.** The
+> `READY --> DISCONNECTED` transition for "last station leaves" can fire even
+> while the station is still actively transmitting. The nRF70 AP driver's
+> station-inactivity accounting (`hostapd_drv_get_inact_sec()` /
+> `ap_handle_timer()` in `wpa_supplicant/src/ap/sta_info.c`) does not reliably
+> reset on real client traffic, so `p2p_go_max_inactivity` (default 300 s) can
+> disassociate a live client for `reason=4 (inactivity)`. Lowering that timeout
+> was tried and reverted — it turns a rare 5-minute-interval churn into one
+> every ~33 s. **No finite value of this timeout is safe**, so this app does
+> not touch it; instead the gateway evicts a genuinely dead client itself —
+> see "Client Liveness Eviction" below. Full investigation:
+> [zego/patches/hostap/README.md](../../../zego/patches/hostap/README.md).
+
+---
+
+## Client Liveness Eviction (Gateway)
+
+Rather than waiting on the broken 300 s driver timer above, the gateway
+detects a dead P2P_GC itself and force-disconnects it — in `net_event_app.c`,
+independent of the zego brick's own `zego_on_net_event_wifi_ap_sta_connected()`
+hook (which only exposes a station *count*, not a MAC, so it can't be reused
+for this):
+
+1. A dedicated `net_mgmt_event_callback` on `NET_EVENT_WIFI_AP_STA_CONNECTED`/
+   `_DISCONNECTED` captures the connected station's MAC (`struct
+   wifi_ap_sta_info.mac` from `cb->info`).
+2. `net_event_app_client_seen()` — called from `wifi_audio_gateway/main.c`'s
+   `socket_rx_handler()` on every valid command frame (START/STOP/KEEPALIVE
+   all count) — reschedules a `CLIENT_LIVENESS_TIMEOUT_SEC` (15 s)
+   `k_work_delayable`.
+3. If it fires, the gateway calls
+   `net_mgmt(NET_REQUEST_WIFI_AP_STA_DISCONNECT, iface, mac, WIFI_MAC_ADDR_LEN)`
+   to force the disassociation itself, which drives the normal
+   `AP_STA_DISCONNECTED` flow (audio stop, WPS PBC re-arm) immediately instead
+   of after minutes.
+
+15 s was chosen because the headset's stream watchdog
+(`wifi_audio_headset/main.c`, `stream_watchdog_handler()`) already sends a
+command every 5 s unconditionally — streaming or not — so three missed cycles
+reliably means the client is actually gone, not just quiet.
+
+**Hardware-confirmed 2026-08-06:** force-disconnect fired at the expected 15 s
+mark, and total recovery (disconnect → WPS re-arm → reconnect → streaming
+resumed) measured ~20 s, down from the 300 s+ this section's Known Limitation
+describes.
 
 ---
 
