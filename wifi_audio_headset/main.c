@@ -333,6 +333,50 @@ int socket_utils_init(void)
 	return ret;
 }
 
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
+/* The audio stream is downlink-only, so without this the client sends nothing for
+ * minutes at a time. That has two consequences this work item addresses:
+ *   - the AP eventually disassociates the "inactive" station (reason 4), and
+ *   - after any server-side socket teardown the server no longer knows the
+ *     client's address, so it goes quiet and nothing on either side notices.
+ * A stalled stream is therefore recovered by re-sending AUDIO_START_CMD, which
+ * the gateway ignores while its own USB source is idle.
+ */
+#define STREAM_WATCHDOG_PERIOD_SEC 5
+
+static struct k_work_delayable stream_watchdog_work;
+
+static void stream_watchdog_handler(struct k_work *work)
+{
+	static uint32_t last_frame_count;
+	static bool stall_logged;
+	uint32_t frame_count = wifi_audio_rx_frame_count();
+
+	ARG_UNUSED(work);
+
+	if (!serveraddr_set_signall) {
+		goto reschedule;
+	}
+
+	if (strm_state == STATE_STREAMING && frame_count == last_frame_count) {
+		if (!stall_logged) {
+			LOG_WRN("No audio received, - re-requesting stream every %d s",
+				STREAM_WATCHDOG_PERIOD_SEC);
+			stall_logged = true;
+		}
+		send_audio_command(AUDIO_START_CMD);
+	} else {
+		stall_logged = false;
+		send_audio_command(AUDIO_KEEPALIVE_CMD);
+	}
+
+	last_frame_count = frame_count;
+
+reschedule:
+	k_work_reschedule(&stream_watchdog_work, K_SECONDS(STREAM_WATCHDOG_PERIOD_SEC));
+}
+#endif /* CONFIG_SOCKET_ROLE_CLIENT */
+
 int main(void)
 {
 	int ret;
@@ -376,6 +420,11 @@ int main(void)
 
 	ret = wifi_audio_rx_init();
 	ERR_CHK_MSG(ret, "Failed to initialize rx path");
+
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
+	k_work_init_delayable(&stream_watchdog_work, stream_watchdog_handler);
+	k_work_reschedule(&stream_watchdog_work, K_SECONDS(STREAM_WATCHDOG_PERIOD_SEC));
+#endif
 
 	return 0;
 }
