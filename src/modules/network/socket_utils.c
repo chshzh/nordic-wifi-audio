@@ -20,7 +20,7 @@ LOG_MODULE_REGISTER(socket_utils, CONFIG_SOCKET_UTILS_LOG_LEVEL);
 #include <zephyr/shell/shell.h>
 #include <zephyr/net/dns_sd.h>
 #include "socket_utils.h"
-/* net_event_mgmt.h and wifi_utils.h retired (Step 3.3) — zego/network brick owns these */
+/* net_event_mgmt.h and wifi_utils.h retired (Step 3.3) - zego/network brick owns these */
 
 #include <zephyr/net/dns_resolve.h>
 
@@ -52,7 +52,7 @@ DNS_SD_REGISTER_UDP_SERVICE(audio_service, CONFIG_NET_HOSTNAME, DNS_SD_SERVICE_T
 			    DNS_SD_SERVICE_DOMAIN, audio_service_txt, socket_port);
 #endif
 
-/* station_connected_sem retired — zego/network brick handles station events */
+/* station_connected_sem retired - zego/network brick handles station events */
 static int udp_socket;
 struct sockaddr_in self_addr;
 char target_addr_str[32];
@@ -128,7 +128,7 @@ static int dns_sd_discover_gateway(void)
 	/* Static so the memory stays valid after we return.  The DNS resolver
 	 * holds a callback pointer into this struct (via user_data) and may
 	 * fire a final DNS_EAI_ALLDONE/CANCELED callback up to
-	 * DNS_SD_DISCOVERY_TIMEOUT_MS after the query was issued — after the
+	 * DNS_SD_DISCOVERY_TIMEOUT_MS after the query was issued - after the
 	 * function has already returned.  A stack-allocated ctx would be
 	 * invalid by then, corrupting the k_sem wait-queue → BUS FAULT in
 	 * sys_dlist_remove.  Static allocation keeps the memory live. */
@@ -365,7 +365,7 @@ void socket_utils_thread(void)
 	/* Block until DHCP is bound so mDNS queries go out on a live interface. */
 	LOG_INF("Waiting for Wi-Fi DHCP...");
 	k_sem_take(&s_dhcp_ready, K_FOREVER);
-	LOG_INF("DHCP bound — starting gateway discovery");
+	LOG_INF("DHCP bound - starting gateway discovery");
 
 	if (!socket_utils_is_target_set()) {
 
@@ -441,7 +441,18 @@ void socket_utils_thread(void)
 		}
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
-		if (serveraddr_set_signall && !socket_ready) {
+		/* Set unconditionally on serveraddr_set_signall: gating it on that flag
+		 * races Wi-Fi reconnect. If the socket rebinds before
+		 * socket_utils_set_target_ipv4() re-arms the target (common after a
+		 * disconnect/reconnect), socket_ready never gets set here, and nothing
+		 * else sets it later since receiving the first packet requires the
+		 * client to send AUDIO_START_CMD first, which itself waits on this
+		 * notification - a permanent deadlock. socket_ready only means "the
+		 * local socket is bound", independent of whether the peer is known yet;
+		 * socket_utils_notify_target_ready() already gates on both flags, so
+		 * whichever of the two finishes last is the one that fires it.
+		 */
+		if (!socket_ready) {
 			socket_ready = true;
 			socket_utils_notify_target_ready();
 		}
