@@ -6,18 +6,37 @@
 #ifndef _WIFI_AUDIO_RX_H_
 #define _WIFI_AUDIO_RX_H_
 
-#define START_SEQUENCE_1 0xFF
-#define START_SEQUENCE_2 0xAA
-#define END_SEQUENCE_1   0xFF
-#define END_SEQUENCE_2   0xBB
-#define SEND_CMD_SIGN    0x00
-#define SEND_DATA_SIGN   0x01
+#define START_SEQUENCE_1   0xFF
+#define START_SEQUENCE_2   0xAA
+#define END_SEQUENCE_1     0xFF
+#define END_SEQUENCE_2     0xBB
+#define SEND_CMD_SIGN      0x00
+#define SEND_DATA_SIGN     0x01
+/* Marks the 2nd UDP datagram of a frame split across two sends. Audio payload bytes
+ * (raw PCM or Opus) can coincidentally match SEND_DATA_SIGN, so the tail needs its own
+ * explicit, sender-written tag rather than being inferred from "has no header".
+ */
+#define SEND_DATA_TAIL_SIGN 0x02
 #define AUDIO_START_CMD  0x00
 #define AUDIO_STOP_CMD   0x01
+/* Client->server liveness ping. Carries no state change; its only job is to keep
+ * uplink traffic flowing so the AP does not disassociate the (otherwise
+ * receive-only) client for inactivity, and to re-teach the server the client's
+ * address after the server's socket has been torn down and rebound.
+ */
+#define AUDIO_KEEPALIVE_CMD 0x02
 
 void send_audio_command(uint8_t audio_command);
 
 void send_audio_frame(uint8_t *audio_data, size_t data_length);
+
+/**
+ * @brief Number of complete audio frames handed to the datapath since boot.
+ *
+ * Used by the headset to detect a silently stalled stream (frame count frozen
+ * while the stream is supposed to be running).
+ */
+uint32_t wifi_audio_rx_frame_count(void);
 
 /**
  * @brief Data handler when audio data has been received through WiFi.

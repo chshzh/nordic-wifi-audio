@@ -152,8 +152,10 @@ void audio_data_frame_process(uint8_t *p_data, size_t data_size)
  * framing content-independent; scanning the payload for an end marker misfires whenever
  * PCM audio happens to contain those bytes, which truncates the frame and drops its tail.
  */
-#define HEADER_SIZE     5
-#define FULL_FRAME_SIZE (HEADER_SIZE + MAX_AUDIO_FRAME_SIZE)
+#define HEADER_SIZE      5
+#define TAIL_HEADER_SIZE 3
+#define FULL_FRAME_SIZE  (HEADER_SIZE + MAX_AUDIO_FRAME_SIZE)
+#define AUDIO_CHUNK_SIZE 1024
 
 static uint32_t rx_frames_ok;
 static uint32_t rx_lost_head;
@@ -161,32 +163,54 @@ static uint32_t rx_lost_tail;
 
 void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 {
-	/* Each audio frame spans two UDP datagrams (socket_utils_tx_data chunks at 1024). */
+	/* Each audio frame spans up to two UDP datagrams (send_audio_frame() fragments at
+	 * AUDIO_CHUNK_SIZE). Head and tail are each explicitly tagged by the sender — never
+	 * inferred from payload content, which can coincidentally match either tag.
+	 */
 	static uint8_t frame_buffer[FULL_FRAME_SIZE];
 	static size_t current_frame_size;
 	size_t payload_len;
 	bool is_head;
+	bool is_tail;
 
 	is_head = (data_size >= HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
 		   p_data[1] == START_SEQUENCE_2 && p_data[2] == SEND_DATA_SIGN);
+	is_tail = (!is_head && data_size >= TAIL_HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
+		   p_data[1] == START_SEQUENCE_2 && p_data[2] == SEND_DATA_TAIL_SIGN);
 
 	if (is_head) {
-		/* Drop any partial frame left behind by a lost tail datagram. */
-		current_frame_size = 0;
-	} else if (current_frame_size == 0) {
-		/* Tail with no head: the head datagram was lost. */
+		if (data_size > FULL_FRAME_SIZE) {
+			rx_lost_tail++;
+			current_frame_size = 0;
+			return;
+		}
+
+		memcpy(frame_buffer, p_data, data_size);
+		current_frame_size = data_size;
+	} else if (is_tail) {
+		if (current_frame_size == 0) {
+			/* Tail with no head in progress: the head datagram was lost. */
+			rx_lost_head++;
+			return;
+		}
+
+		p_data += TAIL_HEADER_SIZE;
+		data_size -= TAIL_HEADER_SIZE;
+
+		if (current_frame_size + data_size > FULL_FRAME_SIZE) {
+			rx_lost_tail++;
+			current_frame_size = 0;
+			return;
+		}
+
+		memcpy(frame_buffer + current_frame_size, p_data, data_size);
+		current_frame_size += data_size;
+	} else {
+		/* Neither an expected head nor a tail we're waiting for — desynced. */
 		rx_lost_head++;
-		return;
-	}
-
-	if (current_frame_size + data_size > FULL_FRAME_SIZE) {
-		rx_lost_tail++;
 		current_frame_size = 0;
 		return;
 	}
-
-	memcpy(frame_buffer + current_frame_size, p_data, data_size);
-	current_frame_size += data_size;
 
 	if (current_frame_size < HEADER_SIZE) {
 		return;
@@ -214,6 +238,11 @@ void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 	}
 
 	current_frame_size = 0;
+}
+
+uint32_t wifi_audio_rx_frame_count(void)
+{
+	return rx_frames_ok;
 }
 
 /**
@@ -302,22 +331,40 @@ void send_audio_command(uint8_t audio_command)
 
 void send_audio_frame(uint8_t *audio_data, size_t data_length)
 {
-	/* Only ever called from the encoder thread, so a static buffer is safe and avoids
-	 * a k_malloc/k_free pair 100 times a second. */
-	static uint8_t data_packet[FULL_FRAME_SIZE];
+	/* Only ever called from the encoder thread, so static buffers are safe and avoid
+	 * a k_malloc/k_free pair 100 times a second.
+	 */
+	static uint8_t head_packet[AUDIO_CHUNK_SIZE];
+	static uint8_t tail_packet[TAIL_HEADER_SIZE + MAX_AUDIO_FRAME_SIZE];
+	size_t head_payload_len;
+	size_t tail_payload_len;
 
 	if (data_length > MAX_AUDIO_FRAME_SIZE) {
 		LOG_ERR("Audio frame too large: %u", data_length);
 		return;
 	}
 
-	data_packet[0] = START_SEQUENCE_1;
-	data_packet[1] = START_SEQUENCE_2;
-	data_packet[2] = SEND_DATA_SIGN;
-	data_packet[3] = (uint8_t)(data_length >> 8);
-	data_packet[4] = (uint8_t)(data_length & 0xFF);
+	head_packet[0] = START_SEQUENCE_1;
+	head_packet[1] = START_SEQUENCE_2;
+	head_packet[2] = SEND_DATA_SIGN;
+	head_packet[3] = (uint8_t)(data_length >> 8);
+	head_packet[4] = (uint8_t)(data_length & 0xFF);
 
-	memcpy(data_packet + HEADER_SIZE, audio_data, data_length);
+	head_payload_len = MIN(data_length, sizeof(head_packet) - HEADER_SIZE);
+	memcpy(head_packet + HEADER_SIZE, audio_data, head_payload_len);
+	socket_utils_tx_data(head_packet, HEADER_SIZE + head_payload_len);
 
-	socket_utils_tx_data(data_packet, HEADER_SIZE + data_length);
+	tail_payload_len = data_length - head_payload_len;
+	if (tail_payload_len == 0) {
+		return;
+	}
+
+	/* Explicit tail tag instead of a header-less fragment — encoded/PCM payload bytes
+	 * can coincidentally match the head tag, desyncing the receiver's reassembly.
+	 */
+	tail_packet[0] = START_SEQUENCE_1;
+	tail_packet[1] = START_SEQUENCE_2;
+	tail_packet[2] = SEND_DATA_TAIL_SIGN;
+	memcpy(tail_packet + TAIL_HEADER_SIZE, audio_data + head_payload_len, tail_payload_len);
+	socket_utils_tx_data(tail_packet, TAIL_HEADER_SIZE + tail_payload_len);
 }
