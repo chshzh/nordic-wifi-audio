@@ -93,12 +93,7 @@ int numDec = 0;                              /*Number of decoded samples or @ref
 #define JUST_IN_TIME_BOUND_US      2500
 
 /* How often to print under-run warning */
-#define UNDERRUN_LOG_INTERVAL_BLKS 5000
-
-/* Minimum consecutive under-run blocks before logging stopped/resumed — Wi-Fi
- * delivery jitter of a few ms is routine and inaudible; only warn once a gap
- * is long enough to matter. */
-#define UNDERRUN_LOG_THRESHOLD_BLKS 30
+// #define UNDERRUN_LOG_INTERVAL_BLKS 5000
 
 /* Jitter buffer depth (1 blk = 1 ms). Playback stays silent until this many
  * blocks are queued, and re-arms after every under-run — without it the
@@ -695,8 +690,23 @@ static uint16_t rate_ctrl_update(int32_t fill_avg)
 	static int32_t integ;
 	int32_t err, freq;
 
-	if (!ctrl_blk.out.playing || stream_state_get() != STATE_STREAMING) {
+	/* Gate on ctrl_blk.out.playing only, not stream_state_get(): the command-driven
+	 * stream state flips the instant a pause/resume is requested, but real audio can
+	 * still be actively flowing for tens/hundreds of ms after that (network + gateway
+	 * turnaround latency). Snapping straight to APLL_FREQ_CENTER while audio is still
+	 * playing is an abrupt clock jump — audible as the same glitch a reflash causes.
+	 * ctrl_blk.out.playing already tracks "is real audio being output right now" with
+	 * proper prebuffer hysteresis, so it alone is the correct gate.
+	 */
+	if (!ctrl_blk.out.playing) {
+		/* Actively return the APLL to nominal rather than just reporting it:
+		 * leaving it wherever the servo last pushed it means playback resumes
+		 * at an off-nominal rate (audible as a pitch/speed shift) for up to a
+		 * full control period, and a stream that stalls here never gets
+		 * corrected at all.
+		 */
 		integ = 0;
+		hfclkaudio_set(APLL_FREQ_CENTER);
 		return APLL_FREQ_CENTER;
 	}
 
@@ -725,8 +735,6 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					    uint32_t const *tx_buf_released)
 {
 	int ret;
-	static bool underrun_condition;
-	static bool underrun_logged;
 
 	alt_buffer_free(tx_buf_released);
 
@@ -766,6 +774,15 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 				/* Refilling: hold the FIFO and stay silent. */
 				if (out_fifo_fill_blks() >= PREBUF_TARGET_BLKS) {
 					ctrl_blk.out.playing = true;
+					/* Discard the fill average straddling the mute/resume
+					 * boundary — mixing frozen mute-period samples with
+					 * fresh resumed ones would otherwise hand rate_ctrl_update()
+					 * a bogus error term, snapping the APLL to an audible
+					 * pitch shift for up to a second. Start the next window
+					 * clean instead.
+					 */
+					ctrl_period_cnt = 0;
+					fill_sum = 0;
 					/* DIAG: pairs with the "ran dry" line below. */
 					LOG_WRN("Jitter buffer refilled after %u ms mute",
 						ctrl_blk.out.total_blk_underruns);
@@ -775,17 +792,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 			}
 
 			if (have_data) {
-				/* Only increment if not in under-run condition */
 				ctrl_blk.out.cons_blk_idx = next_out_blk_idx;
-				if (underrun_condition) {
-					if (underrun_logged) {
-						LOG_WRN("Audio streaming resumed after %d ms silent (I2S TX under-run cleared)",
-							ctrl_blk.out.total_blk_underruns);
-						underrun_logged = false;
-					}
-					underrun_condition = false;
-					ctrl_blk.out.total_blk_underruns = 0;
-				}
+				ctrl_blk.out.total_blk_underruns = 0;
 
 				tx_buf = (uint8_t *)&ctrl_blk.out
 						 .fifo[next_out_blk_idx * BLK_STEREO_NUM_SAMPS];
@@ -806,25 +814,30 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					if (ctrl_blk.out.playing) {
 						/* DIAG: start of the refill mute. */
 						LOG_WRN("Jitter buffer ran dry - muting to refill");
+						/* Same reasoning as the refill-complete reset
+						 * above, applied at the other edge of the
+						 * mute/resume boundary.
+						 */
+						ctrl_period_cnt = 0;
+						fill_sum = 0;
 					}
-					ctrl_blk.out.playing = false;
-					underrun_condition = true;
 					ctrl_blk.out.total_blk_underruns++;
 
-					if (!underrun_logged &&
-					    ctrl_blk.out.total_blk_underruns >=
-						    UNDERRUN_LOG_THRESHOLD_BLKS) {
-						LOG_WRN("Audio streaming stopped - I2S TX under-run "
-							"(no new data, playing silence)");
-						underrun_logged = true;
-					}
-
-					if ((ctrl_blk.out.total_blk_underruns %
-					     UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
-						LOG_WRN("In I2S TX under-run condition, total: %d",
-							ctrl_blk.out.total_blk_underruns);
-					}
+					// if ((ctrl_blk.out.total_blk_underruns %
+					//      UNDERRUN_LOG_INTERVAL_BLKS) == 0) {
+					// 	LOG_WRN("In I2S TX under-run condition, total: %d",
+					// 		ctrl_blk.out.total_blk_underruns);
+					// }
 				}
+
+				/* Clear unconditionally, not just while STREAMING: an
+				 * explicit pause is "not playing" too. Otherwise
+				 * first_mute_blk stays true for the whole pause below,
+				 * re-fading the same stale last_played_blk into the DAC
+				 * every 1 ms tick instead of true silence.
+				 */
+				ctrl_blk.out.playing = false;
+
 				/*
 				 * No data available in out.fifo
 				 * use alternative buffers
@@ -1055,6 +1068,11 @@ int audio_datapath_pres_delay_us_set(uint32_t delay_us)
 void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 {
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
+}
+
+bool audio_datapath_is_playing(void)
+{
+	return ctrl_blk.out.playing;
 }
 
 // void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool

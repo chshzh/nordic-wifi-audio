@@ -47,6 +47,16 @@ int audio_datapath_pres_delay_us_set(uint32_t delay_us);
 void audio_datapath_pres_delay_us_get(uint32_t *delay_us);
 
 /**
+ * @brief Whether real audio is currently being output over I2S.
+ *
+ * @note False while the jitter buffer is refilling/muted (e.g. no data
+ *       arriving yet, or ran dry), even if stream_state_get() == STATE_STREAMING.
+ *
+ * @return true if audio is actively playing, false otherwise.
+ */
+bool audio_datapath_is_playing(void);
+
+/**
  * @brief Input an audio data frame which is processed and outputted over I2S
  *
  * @note A frame of raw encoded audio data is inputted, and this data then is decoded

@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-06-26-14-24 |
+| Version | 2026-08-06-19-45 |
 | PRD Version | 2026-06-26-11-29 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
@@ -15,6 +15,11 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-19-45 | Added `stream_paused_by_user` (gateway only) so an explicit pause (`AUDIO_STOP_CMD` or local PLAY_PAUSE button) stays paused even if the USB host resumes sending audio — previously `streamctrl_handle_usb_audio_active()`'s auto-resume only checked `strm_state == STATE_PAUSED`, which couldn't distinguish an explicit pause from a USB-idle auto-pause. See "Explicit pause vs. auto-pause" under Audio Streaming State Machine below. |
+| 2026-08-06-15-00 | Added the "Audio Streaming State Machine" section: separate gateway/headset state diagrams for `STATE_STREAMING`/`STATE_PAUSED`, plus a trigger table covering all six independent sources that can flip that state (Wi-Fi hooks, socket protocol commands, USB host activity, local button, stream watchdog). Documents a known gap: the Wi-Fi-disconnect hooks (`net_event_app.c`) call `audio_system_encoder_stop()` directly without calling `stream_state_set()`, so `strm_state` can go stale after a Wi-Fi-triggered stop. |
+| 2026-08-06-08-00 | Fixed two overnight-soak failures. (1) Permanent stream stall: the stream is downlink-only, so the AP disassociates the idle client (reason 4) and, once the gateway pauses on client-disconnect, nothing ever re-triggers it. Added `AUDIO_KEEPALIVE_CMD` (0x02) plus a 5 s headset stream watchdog that re-sends `AUDIO_START_CMD` when the RX frame count stops advancing; `AUDIO_START_CMD` on the gateway now honours USB host idle so recovery cannot override the silence pause. (2) Playback speed/pitch drift: `rate_ctrl_update()` reported `APLL_FREQ_CENTER` when not playing but never applied it, leaving `HFCLKAUDIO` wherever the servo last pushed it. |
+| 2026-08-05-16-30 | Fixed a wire-framing bug: the tail fragment of a 2-datagram audio frame carried no header, so raw PCM/Opus payload bytes could coincidentally match the head's magic sequence and desync RX reassembly (`Invalid frame length ...` + multi-second audio dropout). Tail fragments now carry an explicit `SEND_DATA_TAIL_SIGN` (0x02) tag instead of being inferred from "no header", on both `send_audio_frame()` (gateway TX) and `wifi_audio_rx_data_handler()` (headset RX). Wire-protocol change — both images must be rebuilt/reflashed together. |
+| 2026-08-05-11-00 | Gateway now detects whether the USB host is actively sending (non-silent) audio and pauses/resumes the Wi-Fi stream accordingly (`audio_usb.c` host-activity detection, `streamctrl_handle_usb_audio_active()`). Removed the headset-side "Audio streaming stopped"/"Audio streaming resumed" under-run hysteresis logging in `audio_datapath.c` (now redundant with gateway-side control); the jitter-buffer ran-dry/refilled mute logic is unchanged. |
 | 2026-06-26-14-24 | Documented KNOWN LIMITATION: drift compensation is not wired up in the Wi-Fi path (sdu_ref timestamps commented out) → headset I2S clock drifts → periodic audible crackle. Added the Wi-Fi RX framing resync note. Both are pre-existing (independent of the UAC1→UAC2 migration). |
 | 2026-06-25-13-35 | Updated to PRD v2026-06-25-13-30: square-wave test tone replaces LC3/CMSIS-DSP tone_gen (drops CMSIS_DSP); dual-mode peer resolution (P2P_GC fixed IP vs STA mDNS); P2P Client→P2P_GC |
 | 2026-06-22-15-18 | Updated to PRD v2026-06-22-15-18: added peer-address resolution by mode (P2P = fixed IP, STA = mDNS); Opus STA-only constraint documented |
@@ -66,13 +71,32 @@ src/audio/
 Defined in `src/audio/wifi_audio_rx.h`:
 
 ```
-┌──────────┬──────────┬──────┬──────────────────┬──────────┬──────────┐
-│ 0xFF     │ 0xAA     │ TYPE │ PAYLOAD (n bytes) │ 0xFF     │ 0xBB     │
-│ START_1  │ START_2  │      │                  │ END_1    │ END_2    │
-└──────────┴──────────┴──────┴──────────────────┴──────────┴──────────┘
-TYPE: 0x00 = command, 0x01 = audio data
-Command payloads: 0x00 = AUDIO_START, 0x01 = AUDIO_STOP
+Command (single datagram, always fits in one send):
+┌──────────┬──────────┬──────┬─────────┬──────────┬──────────┐
+│ 0xFF     │ 0xAA     │ 0x00 │ CMD     │ 0xFF     │ 0xBB     │
+│ START_1  │ START_2  │ TYPE │         │ END_1    │ END_2    │
+└──────────┴──────────┴──────┴─────────┴──────────┴──────────┘
+CMD: 0x00 = AUDIO_START, 0x01 = AUDIO_STOP, 0x02 = AUDIO_KEEPALIVE
+
+Audio frame, head fragment (always sent first):
+┌──────────┬──────────┬──────┬───────────────────┬────────────────────┐
+│ 0xFF     │ 0xAA     │ 0x01 │ LEN (big-endian)   │ PAYLOAD (n bytes)  │
+│ START_1  │ START_2  │ TYPE │ 2 bytes            │                    │
+└──────────┴──────────┴──────┴───────────────────┴────────────────────┘
+
+Audio frame, tail fragment (only sent if payload didn't fit in the head datagram):
+┌──────────┬──────────┬──────┬────────────────────┐
+│ 0xFF     │ 0xAA     │ 0x02 │ PAYLOAD (n bytes)  │
+│ START_1  │ START_2  │ TYPE │                    │
+└──────────┴──────────┴──────┴────────────────────┘
 ```
+
+The tail fragment carries its own explicit type byte (`0x02`) rather than being
+inferred from "has no header" — raw PCM or Opus payload bytes can coincidentally
+match the head's magic sequence, which previously desynced the receiver's
+reassembly (`wifi_audio_rx: Invalid frame length ...`) whenever real audio
+content happened to collide with it. Head and tail are now both unambiguous,
+sender-written tags, independent of payload content or codec.
 
 Max frame size: 1500 bytes (Wi-Fi MTU). Gateway TX size configured to 2048 bytes
 (`CONFIG_NRF70_TX_MAX_DATA_SIZE=2048`) to accommodate raw PCM frames.
@@ -154,6 +178,106 @@ nRF54LM20A (no HFCLKAUDIO) this is a no-op.
 > MTU so the 1925 B frame fits) to halve per-frame packet-loss exposure.
 
 ---
+
+## USB Host Audio-Activity Detection (Gateway)
+
+The gateway's USB OUT PCM stream (`src/modules/audio_usb.c`) is monitored so the
+Wi-Fi stream is paused while the PC host isn't actually playing audio, instead
+of forwarding silence to the headset indefinitely:
+
+| Signal | Detection | Action |
+|---|---|---|
+| Host stops sending non-silent PCM (samples ≤ ±32 for ≥1000 ms) | `host_audio_activity_check()` in `data_recv_cb` | `streamctrl_handle_usb_audio_active(false)` → encoder stop, `STATE_PAUSED` |
+| Host resumes sending non-silent PCM | Same check, first non-silent block | `streamctrl_handle_usb_audio_active(true)` → encoder start, `STATE_STREAMING` |
+| Host disables the USB OUT terminal (stream closed) | `terminal_update_cb()` | Immediate `streamctrl_handle_usb_audio_active(false)`, no timeout |
+
+Only implemented for 16-bit PCM (`CONFIG_AUDIO_BIT_DEPTH_BITS == 16`); gated by
+`CONFIG_SOCKET_ROLE_SERVER` (gateway role only). Declared in `streamctrl.h`,
+implemented in `wifi_audio_gateway/main.c` alongside
+`streamctrl_handle_client_disconnect()`.
+
+---
+
+## Audio Streaming State Machine
+
+`enum stream_state` (`STATE_STREAMING` / `STATE_PAUSED`, `streamctrl.h`) is
+tracked independently on each side — there is no shared state, only the
+UDP command protocol (`AUDIO_START_CMD` / `AUDIO_STOP_CMD` / `AUDIO_KEEPALIVE_CMD`,
+see UDP Frame Protocol above) keeping the two roughly in sync. Six independent
+sources can flip the state:
+
+| # | Trigger | Side | Effect |
+|---|---|---|---|
+| 1 | Wi-Fi connect/disconnect (`net_event_app.c` hooks) | Both | Disconnect: `audio_system_encoder_stop()` directly (see known gap below). Connect: peer address set → source #2 below fires next |
+| 2 | Socket target resolved (`socket_target_ready_handler()`) | Headset only | `STATE_STREAMING`, sends `AUDIO_START_CMD` |
+| 3 | `AUDIO_START_CMD` / `AUDIO_STOP_CMD` received | Gateway | Start (only if `audio_usb_host_audio_active()` is true) / Stop. Also clears/sets `stream_paused_by_user` (see below) |
+| 4 | USB host activity (`streamctrl_handle_usb_audio_active()`) | Gateway only | Host resumes → `STATE_STREAMING` (if a client is connected **and** `!stream_paused_by_user`); host idles → `STATE_PAUSED` |
+| 5 | P2P/AP client connect/disconnect (`streamctrl_handle_client_disconnect()`) | Gateway only | Last client leaving → `STATE_PAUSED`; also clears `stream_paused_by_user` so a fresh connection isn't stuck paused |
+| 6 | Local PLAY_PAUSE button | Both | Manual toggle; sends the matching command to the peer. Gateway also sets/clears `stream_paused_by_user` |
+
+```mermaid
+stateDiagram-v2
+    state "Gateway" as GW {
+        [*] --> GW_PAUSED
+        GW_PAUSED --> GW_STREAMING : AUDIO_START_CMD received\n(only if USB host is active)
+        GW_PAUSED --> GW_STREAMING : USB host resumes\n(only if a client socket is connected\nAND not stream_paused_by_user)
+        GW_STREAMING --> GW_PAUSED : AUDIO_STOP_CMD received\n(sets stream_paused_by_user)
+        GW_STREAMING --> GW_PAUSED : USB host goes idle\n(does not set stream_paused_by_user)
+        GW_STREAMING --> GW_PAUSED : last P2P/AP client disconnects\n(clears stream_paused_by_user)
+        GW_PAUSED --> GW_PAUSED : AUDIO_START_CMD received\nwhile USB host idle\n(stays paused; clears stream_paused_by_user)
+    }
+```
+
+```mermaid
+stateDiagram-v2
+    state "Headset" as HS {
+        [*] --> HS_PAUSED
+        HS_PAUSED --> HS_STREAMING : socket target resolved\n(auto-start; sends AUDIO_START_CMD)
+        HS_STREAMING --> HS_STREAMING : stream watchdog (every 5 s):\nRX frame count unchanged\n→ re-send AUDIO_START_CMD (no local\nstate change - this only nudges the gateway)
+    }
+```
+
+The headset's stream watchdog (`wifi_audio_headset/main.c`,
+`stream_watchdog_handler()`) exists specifically to recover from the scenario
+in the Known Limitation above: the link is downlink-only, so the headset
+never generates the traffic that would keep a P2P_GO's inactivity accounting
+happy, and once the gateway pauses on a client disconnect nothing would
+otherwise re-trigger it. Every 5 s the headset checks whether
+`wifi_audio_rx_frame_count()` has advanced; if not (and it believes it should
+be streaming), it re-sends `AUDIO_START_CMD` — which also doubles as a
+keepalive that refreshes the gateway's notion of the client's address.
+
+> **⚠️ Known gap:** `zego_on_net_event_wifi_disconnect()` and
+> `zego_on_net_event_wifi_ap_sta_disconnected()` (`net_event_app.c`) call
+> `audio_system_encoder_stop()` directly on a Wi-Fi-triggered stop, but do
+> **not** call `stream_state_set(STATE_PAUSED)`. `strm_state` can therefore
+> stay `STATE_STREAMING` after a Wi-Fi disconnect even though the encoder has
+> stopped. Not currently a functional bug in the default P2P builds — the
+> headset always calls `stream_state_set(STATE_STREAMING)` unconditionally on
+> reconnect, and the gateway re-derives its state from the next `AUDIO_START_CMD`
+> / USB-activity event — but worth fixing if `stream_state_get()` is ever relied
+> on as a source of truth immediately after a disconnect.
+
+### Explicit pause vs. auto-pause (`stream_paused_by_user`)
+
+Hardware testing showed the USB-activity auto-resume (source #4) would
+override an explicit pause: if the user paused via the headset's PLAY_PAUSE
+button (`AUDIO_STOP_CMD`) while the USB host kept sending audio, the very
+next `streamctrl_handle_usb_audio_active(true)` call would resume streaming
+anyway, since it only checked `strm_state == STATE_PAUSED` — with no way to
+tell an explicit pause from a USB-idle auto-pause.
+
+`wifi_audio_gateway/main.c` now tracks a `stream_paused_by_user` flag
+(`CONFIG_SOCKET_ROLE_SERVER` only) alongside `strm_state`:
+
+- Set on `AUDIO_STOP_CMD` and on the local PLAY_PAUSE button's pause branch.
+- Cleared on `AUDIO_START_CMD`, the local PLAY_PAUSE button's resume branch,
+  and on client disconnect (a fresh connection must not inherit a stale
+  pause from a previous session).
+- `streamctrl_handle_usb_audio_active()`'s auto-resume branch additionally
+  requires `!stream_paused_by_user` — the auto-pause branch (USB goes idle)
+  is unaffected by and does not set the flag, so the existing auto-pause/
+  auto-resume cycle for a merely-idle USB host is preserved.
 
 ## Kconfig Flags
 
