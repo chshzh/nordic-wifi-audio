@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-06-19-35 |
+| Version | 2026-08-06-21-23 |
 | PRD Version | 2026-08-06-19-00 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
@@ -15,6 +15,10 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-21-23 | Reversed the 21-04 fix per explicit user direction: RGB2 (idx 3-5) is Wi-Fi status again (`ROTATE_FIRST_LED`/`CONNECTED_LED`/`ERROR_LED_IDX`/`PAIRING_LED_IDX` moved back to 3/4/3/5 in `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`), RGB1 (idx 0-2) is now the role indicator (`role_led_init()` moved from idx 3/4/5 to idx 0/1/2 in `audio_led.c`). Net effect vs. the original (pre-21-04) config: same RGB2-for-Wi-Fi assignment, but the conflict is gone since the role indicator now lives on RGB1 instead of also being on RGB2. Colors unchanged (Gateway green, Headset blue, per 21-10). |
+| 2026-08-06-21-10 | Swapped RGB2 role indicator colors: Gateway is now Green (was Blue), Headset is now Blue (was Green). |
+| 2026-08-06-21-04 | Bug fix: `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf` had `CONFIG_ZEGO_UX_ROTATE_FIRST_LED=3` / `CONFIG_ZEGO_UX_CONNECTED_LED=4`, pointing zego_ux's Wi-Fi ROTATE/CONNECTED/ERROR animation at RGB2 — the same physical LEDs `role_led_init()` (added below) owns, so the two fought over RGB2 and the role color kept getting overwritten. Moved `ROTATE_FIRST_LED`/`CONNECTED_LED`/`ERROR_LED_IDX`/`PAIRING_LED_IDX` to RGB1 (idx 0-2), matching what §2.4 always documented. See "RGB2 Role Indicator" section below. |
+| 2026-08-06-20-48 | Implemented the RGB2 role indicator (nRF5340 Audio DK only) described in the PRD §2.4 since 2026-06-22 but never actually coded: `role_led_init(bool is_gateway)` in `src/modules/audio_led/audio_led.c`, called once at boot from each app's `main()` right after `zego_ux_print_banner()`. Sets RGB2 solid blue (idx 5) for gateway or solid green (idx 4) for headset, explicitly turning the other two RGB2 channels off so it isn't a mixed color. Root cause of the gap: the original implementation used a Kconfig-based `CONFIG_APP_UX_CONNECTED_LED_GREEN_ONLY` scheme in the pre-v3.4.0 custom `ux.c`, deleted wholesale when the project adopted `zego/bricks/ux` — the PRD text was never updated to match, so the feature silently disappeared. No-op on nRF7002DK/nRF54LM20DK (no RGB2 hardware). |
 | 2026-08-06-19-35 | FR-015 hardware-test fix: the Headset LED was blinking even while no audio was actually flowing (command-driven `stream_state` says STREAMING while the gateway is stalled/paused). Headset now tracks a 3rd state using a new `audio_datapath_is_playing()` getter, polled every 200 ms (`audio_led_poll_work`) since playback activity changes inside the I2S callback, not through `stream_state_set()`: Solid OFF (pause sent) / Solid ON (play sent, not actually playing yet) / Blink (actually playing). Also corrected this doc: `src/modules/audio_led/audio_led.c` is **not** a separate `zephyr_library_named(...)` like `ux.c` — a real build showed that pattern never links into the final image from application-mode CMake, so it's compiled straight into `app`, with the `<led.h>` collision resolved via a `configure_file()`-generated wrapper header instead. |
 | 2026-08-06-19-05 | FR-015: added `src/modules/audio_led/` — a second, audio-specific LED (idx 1 on nRF7002DK/nRF54LM20DK, idx 6 on nRF5340 Audio DK) driven by `audio_led_update(streaming, usb_active)`, called from both apps' `stream_state_set()`. Also renamed LED 0 from "Wi-Fi / audio connection state" to **Wi-Fi / Network Status LED** (FR-007) — documentation-only clarification, since LED 0 was already driven purely by `net_event_app.c`'s network hooks, never by `stream_state`. See "Audio Streaming LED (FR-015)" section below. |
 | 2026-08-04-12-20 | **Bug fix (found via hardware test):** on nRF5340 Audio DK, `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` was left at its default (0) while `CONFIG_ZEGO_UX_BUTTON_IDX` is 4 (BTN5) — the 10 s hold on BTN5 never triggered factory reset (see [board-init-module.md](board-init-module.md) Changelog for the fix). nRF7002DK and nRF54LM20DK were unaffected (both use idx 0 for everything, so the default already matched). |
@@ -54,8 +58,8 @@ src/modules/ux/
 └── CMakeLists.txt
 
 src/modules/audio_led/
-├── audio_led.h   — audio_led_update(streaming, usb_active)
-├── audio_led.c   — LED index selection + LED_CMD_CHAN publish (FR-015)
+├── audio_led.h   — audio_led_update(streaming, usb_active), role_led_init(is_gateway)
+├── audio_led.c   — LED index selection + LED_CMD_CHAN publish (FR-015, RGB1 role indicator)
 └── CMakeLists.txt
 ```
 
@@ -150,6 +154,45 @@ tick.
 | Headset audio LED solid ON | Play command sent (`stream_state == STATE_STREAMING`) but `audio_datapath_is_playing()` is false (stalled/buffering) |
 | Headset audio LED blinking | `audio_datapath_is_playing()` is true — audio is actually being output |
 | LED 0 state unaffected by any of the above | Confirms LED 0 remains Wi-Fi/Network-only (FR-007) |
+
+---
+
+## RGB1 Role Indicator (nRF5340 Audio DK only)
+
+`role_led_init(bool is_gateway)` (`src/modules/audio_led/audio_led.c`) sets RGB1
+(idx 0 red / idx 1 green / idx 2 blue, per `zephyr.dts` led0/led1/led2 aliases)
+to a solid role color once at boot, called right after `zego_ux_print_banner()`
+in each app's `main()`:
+
+| Role | RGB1 color | LED command |
+|---|---|---|
+| Gateway | Green | ON idx 1, OFF idx 0 + idx 2 |
+| Headset | Blue | ON idx 2, OFF idx 0 + idx 1 |
+
+No-op on nRF7002DK/nRF54LM20DK (`#if defined(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP)`
+guard) — those boards have no RGB1/RGB2 split (their single status LED is
+zego_ux-owned only). This was documented in the PRD since 2026-06-22 but never
+actually implemented until 2026-08-06 — the original Kconfig-based mechanism
+(`CONFIG_APP_UX_CONNECTED_LED_GREEN_ONLY` in the pre-v3.4.0 custom `ux.c`) was
+deleted wholesale when the project adopted `zego/bricks/ux`, and the PRD text
+was never updated to match.
+
+RGB2 (idx 3-5) is reserved exclusively for zego_ux's Wi-Fi status animation
+(`CONFIG_ZEGO_UX_ROTATE_FIRST_LED=3`, `CONFIG_ZEGO_UX_CONNECTED_LED=4`,
+`CONFIG_ZEGO_UX_ERROR_LED_IDX=3`, `CONFIG_ZEGO_UX_PAIRING_LED_IDX=5` in
+`boards/nrf5340_audio_dk_nrf5340_cpuapp.conf`) — RGB1 and RGB2 must never share
+responsibilities, or they fight over the same physical LEDs (a real bug found
+and fixed via hardware test on 2026-08-06: the role color kept getting
+overwritten by the Wi-Fi state machine's ROTATE/CONNECTED updates while both
+were briefly assigned to RGB2).
+
+### Test Points
+
+| UART observation | Expected condition |
+|---|---|
+| Gateway RGB1 solid green at boot, stays green through Wi-Fi state changes | `role_led_init(true)` ran; RGB2 (not RGB1) carries ROTATE/CONNECTED/ERROR |
+| Headset RGB1 solid blue at boot, stays blue through Wi-Fi state changes | `role_led_init(false)` ran; RGB2 (not RGB1) carries ROTATE/CONNECTED/ERROR |
+| No RGB1/RGB2 change on nRF7002DK/nRF54LM20DK | Board guard is a no-op there |
 
 ---
 

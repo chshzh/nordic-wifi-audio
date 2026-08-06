@@ -454,6 +454,7 @@ int main(void)
 	ERR_CHK(ret);
 
 	zego_ux_print_banner();
+	role_led_init(true);
 
 	LOG_INF("socket_utils_init");
 	ret = socket_utils_init();

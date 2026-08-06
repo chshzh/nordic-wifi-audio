@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-12-20 |
+| Version | 2026-08-06-21-23 |
 | PRD Version | 2026-08-04-10-56 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-21-23 | Corrected the LED Kconfig table (stale `CONFIG_APP_UX_WIFI_LED_IDX` symbol replaced with the real `CONFIG_ZEGO_UX_CONNECTED_LED`) and the RGB1/RGB2 layout bullets to match the current assignment: RGB2 = Wi-Fi status (zego_ux), RGB1 = role indicator (`role_led_init()`). See [ui-module.md](ui-module.md) Changelog for the fix history. |
 | 2026-08-04-12-20 | **Bug fix (found via hardware test, FR-014):** nRF5340 Audio DK's `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf` overrides `CONFIG_ZEGO_UX_BUTTON_IDX=4` (BTN5) but never overrode `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX`, which stayed at its default (0). Holding BTN5 ≥ 10 s logged `BTN5 (idx 4) longer press` but never triggered factory reset — the listener was still watching idx 0 (VOL-). Added `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX=4` next to the existing override. Added a Kconfig table row + warning callout below so future board additions don't repeat this. |
 | 2026-06-26-11-29 | HW validation outcome: nRF54LM20DK forced to **Full-Speed** (`CONFIG_UDC_DRIVER_HIGH_SPEED_SUPPORT_ENABLED=n`, `high-speed` dropped from UAC2 node) — High-Speed enumeration caused the host's iso-OUT stream to be continuously cancelled (headset starved). All three boards now run UAC2 @ Full-Speed. Proper HS = future work. |
 | 2026-06-26-10-00 | Updated to PRD v2026-06-26-09-55: migrate USB audio from legacy USB Audio Class 1.0 (`usb_audio` / `USB_DEVICE_STACK`) to UAC2 (`usbd_uac2` / `USB_DEVICE_STACK_NEXT` + `USBD_AUDIO2_CLASS`) on all three boards. Adapter design: `audio_usb.c` keeps its `data_fifo`-based public API so `audio_system.c` is unchanged; UAC2 callbacks bridge to `data_fifo`. New `audio_usb_init.c` builds the USBD device context. DTS `usb-audio-hs` `hs_0` nodes replaced by `zephyr,uac2` nodes (Audio DK overrides the base-board `hs_0`). nRF54LM20DK enumerates High-Speed; nRF5340/nRF7002DK Full-Speed. Resolves 0-overview Open Issue #3 (UDC migration). |
@@ -227,7 +228,7 @@ Selected automatically by `CONFIG_AUDIO_SOURCE_USB` (mirrors the nRF5340 Audio a
 |---|---|---|---|---|
 | `CONFIG_ZEGO_BUTTON_NUM_BUTTONS` | Number of physical buttons available | 5 | 2 | 3 |
 | `CONFIG_ZEGO_LED_NUM_LEDS` | Number of LED units available | 9 | 2 | 4 |
-| `CONFIG_APP_UX_WIFI_LED_IDX` | LED index for Wi-Fi status | 0 (RGB1) | 0 | 0 |
+| `CONFIG_ZEGO_UX_CONNECTED_LED` | LED index for Wi-Fi connected status | 4 (RGB2 green) | 0 | 0 |
 | `CONFIG_ZEGO_UX_BUTTON_IDX` | Wi-Fi control button index (mode cycle, pairing) | 4 (BTN5) | 0 (default) | 0 (default) |
 | `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` | Factory-reset (10 s hold) button index | 4 (BTN5) | 0 (default) | 0 (default) |
 
@@ -242,8 +243,8 @@ Selected automatically by `CONFIG_AUDIO_SOURCE_USB` (mirrors the nRF5340 Audio a
 > Changelog.
 
 nRF5340 Audio DK LED layout (9 LEDs):
-- idx 0–2: RGB1 (used for Wi-Fi status ROTATE animation by default — `rotate_count=3, rotate_indices[0..2]`)
-- idx 3–5: RGB2
+- idx 0–2: RGB1 (role indicator, set once at boot by `role_led_init()` — see [ui-module.md](ui-module.md))
+- idx 3–5: RGB2 (Wi-Fi status ROTATE/CONNECTED/ERROR animation — `CONFIG_ZEGO_UX_ROTATE_FIRST_LED=3`)
 - idx 6–8: mono LEDs
 
 ### Board scope (P0 vs deferred)

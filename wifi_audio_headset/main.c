@@ -441,6 +441,7 @@ int main(void)
 	ERR_CHK(ret);
 
 	zego_ux_print_banner();
+	role_led_init(false);
 
 	/* Network LED driven by zego/bricks/ux via ZEGO_UX_WIFI_STATE_CHAN
 	 * (ROTATE = connecting)

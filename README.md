@@ -129,24 +129,24 @@ application use.
 
 | Board | Wi-Fi / Network Status LED | Audio Streaming Status LED | Other LEDs |
 |-------|------------------------------------------|----------------------|------------|
-| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB2 (idx 3–5) — role indicator (see below); LED2–3 (idx 7–8) — free |
+| nRF5340 Audio DK + nRF7002EK | RGB2 R/G/B (idx 3–5) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB1 (idx 0–2) — role indicator (see below); LED2–3 (idx 7–8) — free |
 | nRF7002DK | LED1 — Wi-Fi / network status | LED2 (idx 1) | — |
 | nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / network status | LED1 (idx 1) | LED2–3 (idx 2–3) — free |
 
-nRF5340 Audio DK + nRF7002EK — RGB1 (Wi-Fi / Network Status) state effects:
+nRF5340 Audio DK + nRF7002EK — RGB2 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |-------|--------|
-| Boot / connecting | RGB1 ROTATE (all three channels) |
-| Wi-Fi connected / ready | RGB1 Green — Solid ON |
-| Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
+| Boot / connecting | RGB2 ROTATE (all three channels) |
+| Wi-Fi connected / ready | RGB2 Green — Solid ON |
+| Error / disconnected | RGB2 Red — Fast BLINK (100 ms half-period) |
 
-nRF5340 Audio DK + nRF7002EK — RGB2 role indicator (solid, set at boot):
+nRF5340 Audio DK + nRF7002EK — RGB1 role indicator (solid, set at boot):
 
-| Role | RGB2 colour |
+| Role | RGB1 colour |
 |------|-------------|
-| Gateway | Blue |
-| Headset | Green |
+| Gateway | Green |
+| Headset | Blue |
 
 nRF7002DK and nRF54LM20DK + nRF7002EB2 — LED 0 (Wi-Fi / Network Status) state effects:
 

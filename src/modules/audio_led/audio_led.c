@@ -46,3 +46,37 @@ void audio_led_update(bool streaming, bool usb_active)
 
 	zbus_chan_pub(&LED_CMD_CHAN, &cmd, K_NO_WAIT);
 }
+
+#if defined(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP)
+/* RGB1 channel indices (idx 0-2), per zephyr.dts led0/led1/led2 aliases.
+ * RGB2 (idx 3-5) is reserved for zego_ux's Wi-Fi status animation.
+ */
+#define ROLE_LED_RED_IDX   0
+#define ROLE_LED_GREEN_IDX 1
+#define ROLE_LED_BLUE_IDX  2
+
+static void role_led_set(uint8_t on_idx, uint8_t off_idx_a, uint8_t off_idx_b)
+{
+	struct led_msg cmd = {.type = LED_COMMAND_ON, .led_number = on_idx};
+
+	zbus_chan_pub(&LED_CMD_CHAN, &cmd, K_NO_WAIT);
+	cmd.type = LED_COMMAND_OFF;
+	cmd.led_number = off_idx_a;
+	zbus_chan_pub(&LED_CMD_CHAN, &cmd, K_NO_WAIT);
+	cmd.led_number = off_idx_b;
+	zbus_chan_pub(&LED_CMD_CHAN, &cmd, K_NO_WAIT);
+}
+#endif
+
+void role_led_init(bool is_gateway)
+{
+#if defined(CONFIG_BOARD_NRF5340_AUDIO_DK_NRF5340_CPUAPP)
+	if (is_gateway) {
+		role_led_set(ROLE_LED_GREEN_IDX, ROLE_LED_RED_IDX, ROLE_LED_BLUE_IDX);
+	} else {
+		role_led_set(ROLE_LED_BLUE_IDX, ROLE_LED_RED_IDX, ROLE_LED_GREEN_IDX);
+	}
+#else
+	ARG_UNUSED(is_gateway);
+#endif
+}

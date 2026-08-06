@@ -21,4 +21,12 @@
  */
 void audio_led_update(bool streaming, bool usb_active);
 
+/**
+ * @brief Set the RGB2 role indicator: solid blue (gateway) or green (headset),
+ *        set once at boot. No-op on boards without RGB2 (nRF7002DK, nRF54LM20DK).
+ *
+ * @param is_gateway true for the gateway role, false for headset.
+ */
+void role_led_init(bool is_gateway);
+
 #endif /* _AUDIO_LED_H_ */

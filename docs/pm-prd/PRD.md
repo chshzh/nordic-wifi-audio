@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-08-06-19-30 |
+| Version | 2026-08-06-21-23 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
@@ -18,6 +18,10 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-06-21-23 | Reversed the 21-04 fix per explicit user direction: RGB2 (idx 3–5) is Wi-Fi/Network Status again, RGB1 (idx 0–2) is the role indicator. Net effect vs. the pre-21-04 config: same RGB2-for-Wi-Fi assignment as originally shipped, but the conflict with the role indicator is gone since the role indicator now lives on RGB1 (not also on RGB2). Colors unchanged (Gateway green, Headset blue, per 21-10). |
+| 2026-08-06-21-10 | Swapped RGB2 role indicator colors: Gateway is now Green (was Blue), Headset is now Blue (was Green). `role_led_init()` in `src/modules/audio_led/audio_led.c` updated accordingly. |
+| 2026-08-06-21-04 | Bug fix: `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf` had `CONFIG_ZEGO_UX_ROTATE_FIRST_LED`/`CONFIG_ZEGO_UX_CONNECTED_LED` pointed at RGB2 (idx 3-5), the same physical LEDs as the new RGB2 role indicator (FR-015 changelog above) — the two fought over RGB2, so the role color kept getting overwritten by Wi-Fi ROTATE/CONNECTED updates (this is why RGB2 never showed the role color reliably). Moved the Wi-Fi status ROTATE/CONNECTED/ERROR/PAIRING LEDs back to RGB1 (idx 0-2), matching what §2.4 always documented; RGB2 is now exclusively owned by `role_led_init()`. |
+| 2026-08-06-20-48 | Implemented the nRF5340 Audio DK RGB2 role indicator (§2.4) — documented since 2026-06-22 but never actually coded (the original Kconfig-based mechanism was deleted during the v3.4.0 migration to `zego/bricks/ux` and the PRD text was never updated to match). Now set once at boot: RGB2 solid blue for Gateway, solid green for Headset (`role_led_init()` in `src/modules/audio_led/audio_led.c`). No-op on nRF7002DK/nRF54LM20DK (no RGB2 hardware). |
 | 2026-08-06-19-30 | Refined FR-015's Headset LED (idx 6) to a 3rd state, based on hardware log evidence: the headset was blinking even while no audio was actually flowing (stalled on the gateway side, jitter buffer empty), because "streaming" only reflected command intent, not real playback. Now: Solid OFF once a pause command is sent; Solid ON once a play command is sent but audio isn't flowing yet (stalled/buffering); Blinking only while audio is actually playing. Gateway LED behavior (idx 1 / idx 6) is unchanged. |
 | 2026-08-06-19-00 | Renamed LED 0 from "Wi-Fi / audio connection state" to **Wi-Fi / Network Status LED** (FR-007) — its states (ROTATE / Solid ON / Fast BLINK) now describe network connectivity only, not any audio condition; "Audio link active" → "Wi-Fi connected / ready". This is a documentation/naming clarification only — LED 0 was already driven purely by `net_event_app.c`'s network hooks (DHCP bound, disconnect, last AP client left), never by `stream_state`, so no behavior changed. Removes ambiguity now that FR-015 owns audio-state indication on its own dedicated LED. |
 | 2026-08-06-18-00 | Added FR-015 (P1): a second, audio-specific LED (separate from the existing LED 0 Wi-Fi/audio-link indicator) shows USB source and streaming activity at a glance. Gateway: LED idx 1 (nRF7002DK, nRF54LM20DK + nRF7002EB2) / idx 6 (nRF5340 Audio DK) — Solid ON when USB host audio is available, Solid OFF when no USB audio, Blinking while audio is actively streaming to a connected headset. Headset (nRF5340 Audio DK only): LED idx 6 — Blinking while streaming, Solid OFF otherwise. Both chosen indices were already listed as free in §2.4 and don't collide with LED 0 or the RGB2 role indicator. |
@@ -134,7 +138,7 @@ available for application use.
 
 | Board | LED 0 (idx 0) — Wi-Fi / Network Status | Audio Streaming LED (FR-015) | Other LEDs |
 |---|---|---|---|
-| nRF5340 Audio DK + nRF7002EK | RGB1 R/G/B (idx 0–2) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB2 (idx 3–5) — role indicator (see below); LED2–3 (idx 7–8) — free |
+| nRF5340 Audio DK + nRF7002EK | RGB2 R/G/B (idx 3–5) — ROTATE for Wi-Fi/network state | LED1 (idx 6) | RGB1 (idx 0–2) — role indicator (see below); LED2–3 (idx 7–8) — free |
 | nRF7002DK | LED1 — Wi-Fi / network status | LED2 (idx 1) | — |
 | nRF54LM20DK + nRF7002EB2 | LED0 — Wi-Fi / network status | LED1 (idx 1) | LED2–3 (idx 2–3) — free |
 
@@ -146,20 +150,20 @@ nRF7002DK and nRF54LM20DK + nRF7002EB2 LED 0 (Wi-Fi / Network Status) state effe
 | Wi-Fi connected / ready | Solid ON |
 | Error / disconnected | Fast BLINK (100 ms half-period) |
 
-nRF5340 Audio DK + nRF7002EK RGB1 (Wi-Fi / Network Status) state effects:
+nRF5340 Audio DK + nRF7002EK RGB2 (Wi-Fi / Network Status) state effects:
 
 | State | Effect |
 |---|---|
-| Boot / connecting | RGB1 ROTATE (all three channels) |
-| Wi-Fi connected / ready | RGB1 Green — Solid ON |
-| Error / disconnected | RGB1 Red — Fast BLINK (100 ms half-period) |
+| Boot / connecting | RGB2 ROTATE (all three channels) |
+| Wi-Fi connected / ready | RGB2 Green — Solid ON |
+| Error / disconnected | RGB2 Red — Fast BLINK (100 ms half-period) |
 
-nRF5340 Audio DK + nRF7002EK RGB2 role indicator (solid, set at boot):
+nRF5340 Audio DK + nRF7002EK RGB1 role indicator (solid, set at boot):
 
-| Role | RGB2 colour |
+| Role | RGB1 colour |
 |---|---|
-| Gateway | Blue |
-| Headset | Green |
+| Gateway | Green |
+| Headset | Blue |
 
 Audio Streaming LED (FR-015) state effects — Gateway (idx 1 or idx 6, board-dependent):
 
