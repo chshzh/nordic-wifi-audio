@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 #include <zephyr/kernel.h>
+#include <zephyr/shell/shell.h>
 #include <nrfx_clock.h>
 
 #include "streamctrl.h"
@@ -161,6 +162,13 @@ static uint32_t rx_frames_ok;
 static uint32_t rx_lost_head;
 static uint32_t rx_lost_tail;
 
+/* Real inter-arrival gap between successfully reassembled audio frames, as seen at the
+ * actual jitter-buffer input - the correct basis for sizing PREBUF_TARGET_BLKS
+ * (audio_datapath.c), instead of the one-off measurement its comment currently cites.
+ */
+static uint32_t rx_last_frame_ts_ms;
+static uint32_t rx_max_gap_ms;
+
 void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 {
 	/* Each audio frame spans up to two UDP datagrams (send_audio_frame() fragments at
@@ -248,10 +256,24 @@ void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 
 	audio_data_frame_process(frame_buffer + HEADER_SIZE, payload_len);
 
-	/* ~100 frames/s, so this is a 5 s summary. */
+	uint32_t now_ms = k_uptime_get_32();
+
+	if (rx_last_frame_ts_ms != 0) {
+		uint32_t gap_ms = now_ms - rx_last_frame_ts_ms;
+
+		if (gap_ms > rx_max_gap_ms) {
+			rx_max_gap_ms = gap_ms;
+		}
+	}
+	rx_last_frame_ts_ms = now_ms;
+
+	/* ~100 frames/s, so this is a 5 s summary. LOG_INF (not DBG) so it's visible
+	 * at the default log level while sizing PREBUF_TARGET_BLKS off max_gap_ms.
+	 */
 	if ((++rx_frames_ok % 500) == 0) {
-		LOG_DBG("RX frames ok=%u lost_head=%u lost_tail=%u fifo_ovr=%u", rx_frames_ok,
-			rx_lost_head, rx_lost_tail, rx_fifo_overruns);
+		LOG_DBG("RX frames ok=%u lost_head=%u lost_tail=%u fifo_ovr=%u max_gap_ms=%u",
+			rx_frames_ok, rx_lost_head, rx_lost_tail, rx_fifo_overruns, rx_max_gap_ms);
+		rx_max_gap_ms = 0;
 	}
 
 	current_frame_size = 0;
@@ -261,6 +283,20 @@ uint32_t wifi_audio_rx_frame_count(void)
 {
 	return rx_frames_ok;
 }
+
+static int cmd_audio_rx_stats(const struct shell *shell, size_t argc, const char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(shell, "RX frames ok=%u lost_head=%u lost_tail=%u fifo_ovr=%u max_gap_ms=%u",
+		    rx_frames_ok, rx_lost_head, rx_lost_tail, rx_fifo_overruns, rx_max_gap_ms);
+	rx_max_gap_ms = 0;
+	return 0;
+}
+
+SHELL_CMD_REGISTER(audio_rx_stats, NULL, "Print and reset audio RX frame/gap stats",
+		   cmd_audio_rx_stats);
 
 /**
  * @brief	Receive data from BLE through a k_fifo and send to USB or audio datapath.
