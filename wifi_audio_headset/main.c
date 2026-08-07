@@ -412,13 +412,12 @@ int socket_utils_init(void)
  *   - after any server-side socket teardown the server no longer knows the
  *     client's address, so it goes quiet and nothing on either side notices.
  * KEEP_ALIVE_CMD is sent UNCONDITIONALLY, including while streaming: it is the
- * only proof the gateway has that this client still exists. The gateway cannot
- * infer it locally - a power-cut peer sends no deauth, so socket_connected_signall
- * and strm_state both stay stuck at "connected/streaming", and TX stalling is
- * useless as a signal because it happens continuously during healthy streaming
- * too (hardware-confirmed). Going silent here while streaming means a dead
- * client is only purged by the nRF70's own ~300 s timer instead of
- * net_event_app.c's 15 s eviction.
+ * only proof the gateway has that this client still exists while actually
+ * streaming (a power-cut peer sends no deauth, so nothing local to the
+ * gateway can tell). 2026-08-07: measured to add TX contention against
+ * send_audio_frame() (tens of ms of jitter-buffer gap) - re-enabled at the
+ * user's request with PREBUF_TARGET_BLKS lowered to 10; watch for audible
+ * glitches correlated with KEEP_ALIVE_ACK_CMD receipt.
  */
 #define STREAM_WATCHDOG_PERIOD_SEC 5
 
