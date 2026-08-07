@@ -14,7 +14,7 @@
  * Peer address resolution (mode-branched):
  *   STA:        headset discovers gateway via mDNS (existing socket_utils path)
  *   P2P_GC: dhcp_bound hook sets fixed GO IP 192.168.7.1 directly
- *   P2P_GO:     gateway binds INADDR_ANY; headset's AUDIO_START_CMD triggers encode
+ *   P2P_GO:     gateway binds INADDR_ANY; headset's REQ_PLAY_CMD triggers encode
  */
 
 #include <zephyr/kernel.h>
@@ -54,11 +54,17 @@ static void pub_wifi_state(enum zego_ux_wifi_state state, enum zego_wifi_mode mo
  * reset on real client traffic (hardware-confirmed - see
  * zego/patches/hostap/README.md), so a client that goes silent isn't purged
  * for up to CONFIG_WIFI_NM_WPA_SUPPLICANT P2P_GO_MAX_INACTIVITY (default
- * 300 s). The headset's stream watchdog sends a command frame at least every
- * 5 s unconditionally (streaming or not - see wifi_audio_headset/main.c), so
- * CLIENT_LIVENESS_TIMEOUT_SEC of total silence reliably means the client is
- * actually gone, not just idle. On timeout the station is force-disconnected
- * via NET_REQUEST_WIFI_AP_STA_DISCONNECT, which drives the normal
+ * 300 s). Something has to call net_event_app_client_seen() at least every
+ * CLIENT_LIVENESS_TIMEOUT_SEC, from one of two sources depending on whether
+ * audio is actually flowing (downlink-only, so the headset never generates
+ * uplink traffic while genuinely streaming):
+ *   - Idle/stalled: the headset's stream watchdog sends a command frame every
+ *     5 s (wifi_audio_headset/main.c, stream_watchdog_handler()).
+ *   - Actively streaming: the gateway refreshes its own liveness locally
+ *     (wifi_audio_gateway/main.c, streaming_liveness_refresh_work) - the
+ *     encoder producing frames each period is itself the proof of liveness.
+ * On timeout the station is force-disconnected via
+ * NET_REQUEST_WIFI_AP_STA_DISCONNECT, which drives the normal
  * AP_STA_DISCONNECTED flow (audio stop, WPS PBC re-arm) in seconds instead of
  * minutes. */
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
@@ -137,8 +143,8 @@ void net_event_app_init(void)
  *   P2P_GO:      First AP client joined (ip_addr = "192.168.7.1")
  *
  * For P2P_GC: sets the fixed GO IP as socket target so the headset
- * can send AUDIO_START_CMD to the gateway and start the audio loop.
- * For other modes: audio starts via the AUDIO_START_CMD round-trip (server
+ * can send REQ_PLAY_CMD to the gateway and start the audio loop.
+ * For other modes: audio starts via the REQ_PLAY_CMD round-trip (server
  * waits for headset's command; headset triggers via socket_target_ready_handler).
  */
 void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
@@ -162,7 +168,7 @@ void zego_on_net_event_dhcp_bound(enum zego_wifi_mode mode, const char *ip_addr,
 			LOG_ERR("P2P_GC: failed to parse GO IP");
 		}
 		/* socket_utils_set_target_ipv4 triggers socket_target_ready_handler
-		 * → send_audio_command(AUDIO_START_CMD) → gateway starts encoding. */
+		 * → send_audio_command(REQ_PLAY_CMD) → gateway starts encoding. */
 	}
 	/* STA mode: mDNS discovery in socket_utils_thread sets the target. */
 #endif
@@ -202,7 +208,7 @@ void zego_on_net_event_wifi_ap_enabled(enum zego_wifi_mode mode, const char *ip_
  * correct active mode (fixed to use active_mode instead of a hardcoded SOFTAP
  * value), so LED 0 leaves ROTATE on the P2P_GO/SoftAP side without app help.
  * Audio start itself is unaffected either way, since it's driven by the
- * headset's AUDIO_START_CMD over the socket. */
+ * headset's REQ_PLAY_CMD over the socket. */
 
 void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
 {

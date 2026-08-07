@@ -16,6 +16,16 @@ enum stream_state {
 	STATE_PAUSED,
 };
 
+/* What the user (local button, or a REQ_PLAY_CMD/REQ_PAUSE_CMD command from
+ * the peer) has asked for - independent of whether audio is actually
+ * flowing right now. See gateway_reevaluate_stream() in
+ * wifi_audio_gateway/main.c and wifi_audio_headset/main.c.
+ */
+enum audio_user_request {
+	REQ_PLAY,
+	REQ_PAUSE,
+};
+
 /**
  * @brief Get the current streaming state.
  *
@@ -45,6 +55,17 @@ void streamctrl_handle_client_disconnect(void);
  * @param active	true if the host is sending audio, false if idle/silent.
  */
 void streamctrl_handle_usb_audio_active(bool active);
+#endif
+
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
+/**
+ * @brief Handle a command received from the gateway, keeping the headset's
+ *        user-request state in sync with the gateway's.
+ *
+ * @param cmd	REQ_PLAY_CMD, REQ_PAUSE_CMD, or KEEP_ALIVE_ACK_CMD (wifi_audio_rx.h).
+ * @param seq	Sequence number echoed back for KEEP_ALIVE_ACK_CMD; 0 otherwise.
+ */
+void streamctrl_handle_gateway_command(uint8_t cmd, uint8_t seq);
 #endif
 
 #endif /* _STREAMCTRL_H_ */

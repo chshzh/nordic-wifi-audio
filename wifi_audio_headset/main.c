@@ -60,7 +60,7 @@ struct bt_le_ext_adv *ext_adv;
 K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
-static enum stream_state strm_state = STATE_PAUSED;
+static enum audio_user_request user_request = REQ_PLAY;
 
 /**
  * @brief Drive the Audio Streaming LED (FR-015) from stream intent and actual
@@ -68,17 +68,17 @@ static enum stream_state strm_state = STATE_PAUSED;
  *
  * Three states, deduped so a steady-state poll doesn't restart the blink
  * effect every tick:
- *   - STATE_PAUSED (pause command sent)                -> Solid OFF
- *   - STATE_STREAMING but not actually playing (stalled,
+ *   - REQ_PAUSE (pause command sent)                   -> Solid OFF
+ *   - REQ_PLAY but not actually playing (stalled,
  *     jitter buffer refilling/dry, play command sent)  -> Solid ON
- *   - STATE_STREAMING and audio_datapath_is_playing()   -> Blink
+ *   - REQ_PLAY and audio_datapath_is_playing()          -> Blink
  */
 static enum { AUDIO_LED_TRI_OFF, AUDIO_LED_TRI_ON, AUDIO_LED_TRI_BLINK } audio_led_tri_last =
 	AUDIO_LED_TRI_OFF;
 
 static void audio_stream_led_update(void)
 {
-	bool streaming_intent = (strm_state == STATE_STREAMING);
+	bool streaming_intent = (user_request == REQ_PLAY);
 	bool streaming_active = streaming_intent && audio_datapath_is_playing();
 	__typeof__(audio_led_tri_last) new_state =
 		streaming_active ? AUDIO_LED_TRI_BLINK
@@ -93,7 +93,7 @@ static void audio_stream_led_update(void)
 }
 
 /* Poll audio_datapath_is_playing() since it can change (jitter buffer
- * dry/refill) without any stream_state_set() call to hook into.
+ * dry/refill) without any user_request_set() call to hook into.
  */
 #define AUDIO_LED_POLL_PERIOD_MS 200
 
@@ -109,36 +109,63 @@ static void audio_led_poll_handler(struct k_work *work)
 }
 
 /* Forward declaration */
-static void stream_state_set(enum stream_state stream_state_new);
+static void user_request_set(enum audio_user_request new_request);
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
 static void socket_target_ready_handler(void)
 {
 	LOG_INF("Socket target ready, auto-starting audio stream");
-	stream_state_set(STATE_STREAMING);
-	send_audio_command(AUDIO_START_CMD);
+	user_request_set(REQ_PLAY);
+	send_audio_command(REQ_PLAY_CMD);
 }
 #endif
 
-/* Function for handling all stream state changes */
-static void stream_state_set(enum stream_state stream_state_new)
+static const char *user_request_str(enum audio_user_request request)
 {
-	LOG_INF("Stream state changed from %d to %d", strm_state, stream_state_new);
-	strm_state = stream_state_new;
+	return request == REQ_PLAY ? "PLAY" : "PAUSE";
+}
+
+/* Function for handling all user-request state changes */
+static void user_request_set(enum audio_user_request new_request)
+{
+	if (new_request == user_request) {
+		return;
+	}
+
+	LOG_INF("User request state changed from %s to %s", user_request_str(user_request),
+		user_request_str(new_request));
+	user_request = new_request;
 	audio_stream_led_update();
 }
 
+/* stream_state_get() (streamctrl.h) is shared API also called by the generic
+ * src/audio/audio_datapath.c jitter-buffer logic; translate to/from our own
+ * REQ_PLAY/REQ_PAUSE so that stays the only state variable on this side.
+ */
 uint8_t stream_state_get(void)
 {
-	return strm_state;
+	return user_request == REQ_PLAY ? STATE_STREAMING : STATE_PAUSED;
 }
+
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
+void streamctrl_handle_gateway_command(uint8_t cmd, uint8_t seq)
+{
+	if (cmd == REQ_PLAY_CMD) {
+		user_request_set(REQ_PLAY);
+	} else if (cmd == REQ_PAUSE_CMD) {
+		user_request_set(REQ_PAUSE);
+	} else if (cmd == KEEP_ALIVE_ACK_CMD) {
+		LOG_INF("Keepalive ACK received (seq=%u)", seq);
+	}
+}
+#endif
 
 void streamctrl_send(void const *const data, size_t size)
 {
 	int ret = 0;
 	static int prev_ret;
 
-	if (strm_state == STATE_STREAMING) {
+	if (user_request == REQ_PLAY) {
 		// ret = broadcast_source_send(0, enc_audio);
 
 		if (ret != 0 && ret != prev_ret) {
@@ -191,16 +218,13 @@ static void button_msg_sub_thread(void)
 		switch (msg.button_number) {
 		case APP_BTN_PLAY_PAUSE:
 			if (serveraddr_set_signall == true) {
-				if (strm_state == STATE_STREAMING) {
-					send_audio_command(AUDIO_STOP_CMD);
-					stream_state_set(STATE_PAUSED);
-
-				} else if (strm_state == STATE_PAUSED) {
-					stream_state_set(STATE_STREAMING);
-					send_audio_command(AUDIO_START_CMD);
+				if (user_request == REQ_PLAY) {
+					send_audio_command(REQ_PAUSE_CMD);
+					user_request_set(REQ_PAUSE);
 
 				} else {
-					LOG_WRN("In invalid state: %d", strm_state);
+					user_request_set(REQ_PLAY);
+					send_audio_command(REQ_PLAY_CMD);
 				}
 			} else {
 				LOG_WRN("Please set socket server address first!");
@@ -209,7 +233,7 @@ static void button_msg_sub_thread(void)
 
 		case APP_BTN_TEST_TONE:
 			if (IS_ENABLED(CONFIG_AUDIO_TEST_TONE)) {
-				if (strm_state != STATE_STREAMING) {
+				if (user_request != REQ_PLAY) {
 					LOG_WRN("Not in streaming state");
 					break;
 				}
@@ -224,7 +248,7 @@ static void button_msg_sub_thread(void)
 			break;
 
 		case APP_BTN_VOL_UP:
-			if (strm_state != STATE_STREAMING) {
+			if (user_request != REQ_PLAY) {
 				LOG_WRN("Not in streaming state");
 				break;
 			}
@@ -257,7 +281,7 @@ static void le_audio_msg_sub_thread(void)
 		ret = zbus_sub_wait_msg(&le_audio_evt_sub, &chan, &msg, K_FOREVER);
 		ERR_CHK(ret);
 
-		LOG_DBG("Received event = %d, current state = %d", msg.event, strm_state);
+		LOG_DBG("Received event = %d, current user request = %d", msg.event, user_request);
 
 		switch (msg.event) {
 		case LE_AUDIO_EVT_STREAMING:
@@ -265,13 +289,13 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_encoder_start();
 
-			if (strm_state == STATE_STREAMING) {
+			if (user_request == REQ_PLAY) {
 				LOG_DBG("Got streaming event in streaming state");
 				break;
 			}
 
 			audio_system_start();
-			stream_state_set(STATE_STREAMING);
+			user_request_set(REQ_PLAY);
 
 			break;
 
@@ -280,12 +304,12 @@ static void le_audio_msg_sub_thread(void)
 
 			audio_system_encoder_stop();
 
-			if (strm_state == STATE_PAUSED) {
+			if (user_request == REQ_PAUSE) {
 				LOG_DBG("Got not_streaming event in paused state");
 				break;
 			}
 
-			stream_state_set(STATE_PAUSED);
+			user_request_set(REQ_PAUSE);
 			audio_system_stop();
 
 			break;
@@ -382,13 +406,17 @@ int socket_utils_init(void)
 }
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
-/* The audio stream is downlink-only, so without this the client sends nothing for
- * minutes at a time. That has two consequences this work item addresses:
+/* The audio stream is downlink-only, so without this the client would send
+ * nothing for minutes at a time whenever streaming stalls or is paused. That
+ * has two consequences this addresses:
  *   - the AP eventually disassociates the "inactive" station (reason 4), and
  *   - after any server-side socket teardown the server no longer knows the
  *     client's address, so it goes quiet and nothing on either side notices.
- * A stalled stream is therefore recovered by re-sending AUDIO_START_CMD, which
- * the gateway ignores while its own USB source is idle.
+ * KEEP_ALIVE_CMD is only sent while frames aren't actually arriving - once
+ * real audio is flowing there's other traffic (the frames themselves, ACKed
+ * at the radio level) for the gateway to prove liveness from on its own side
+ * (see streaming_liveness_refresh_work in wifi_audio_gateway/main.c), so
+ * there's nothing useful this side needs to add.
  */
 #define STREAM_WATCHDOG_PERIOD_SEC 5
 
@@ -398,7 +426,9 @@ static void stream_watchdog_handler(struct k_work *work)
 {
 	static uint32_t last_frame_count;
 	static bool stall_logged;
+	static uint8_t keepalive_seq;
 	uint32_t frame_count = wifi_audio_rx_frame_count();
+	bool frames_advancing = (frame_count != last_frame_count);
 
 	ARG_UNUSED(work);
 
@@ -406,16 +436,16 @@ static void stream_watchdog_handler(struct k_work *work)
 		goto reschedule;
 	}
 
-	if (strm_state == STATE_STREAMING && frame_count == last_frame_count) {
-		if (!stall_logged) {
-			LOG_WRN("No audio received, - re-requesting stream every %d s",
+	if (frames_advancing) {
+		stall_logged = false;
+	} else {
+		if (user_request == REQ_PLAY && !stall_logged) {
+			LOG_WRN("No audio received for %d s - gateway is connected but not streaming",
 				STREAM_WATCHDOG_PERIOD_SEC);
 			stall_logged = true;
 		}
-		send_audio_command(AUDIO_START_CMD);
-	} else {
-		stall_logged = false;
-		send_audio_command(AUDIO_KEEPALIVE_CMD);
+		LOG_INF("Sending keepalive (seq=%u)", keepalive_seq);
+		send_keepalive_command(KEEP_ALIVE_CMD, keepalive_seq++);
 	}
 
 	last_frame_count = frame_count;

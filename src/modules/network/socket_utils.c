@@ -446,7 +446,7 @@ void socket_utils_thread(void)
 		 * socket_utils_set_target_ipv4() re-arms the target (common after a
 		 * disconnect/reconnect), socket_ready never gets set here, and nothing
 		 * else sets it later since receiving the first packet requires the
-		 * client to send AUDIO_START_CMD first, which itself waits on this
+		 * client to send REQ_PLAY_CMD first, which itself waits on this
 		 * notification - a permanent deadlock. socket_ready only means "the
 		 * local socket is bound", independent of whether the peer is known yet;
 		 * socket_utils_notify_target_ready() already gates on both flags, so

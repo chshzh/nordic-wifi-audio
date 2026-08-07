@@ -66,18 +66,19 @@ K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STA
 static enum stream_state strm_state = STATE_PAUSED;
 
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
-/* Set on an explicit pause (button or AUDIO_STOP_CMD), cleared on an explicit
- * play (button or AUDIO_START_CMD). Distinguishes that from an auto-pause due
- * to USB host idle, so streamctrl_handle_usb_audio_active() only auto-resumes
- * the latter — an explicit pause must stay paused until the user asks again,
- * even if USB audio starts flowing in the meantime.
+/* What the user (local button or REQ_PLAY_CMD/REQ_PAUSE_CMD from the
+ * headset) has asked for, independent of whether the encoder is actually
+ * running right now. Streaming is only ever actually started when
+ * user_request == REQ_PLAY *and* the USB host is outputting audio *and* a
+ * client is connected - see gateway_reevaluate_stream().
  */
-static bool stream_paused_by_user;
+static enum audio_user_request user_request = REQ_PLAY;
+static bool usb_output_active;
 
-/* Dedups "USB host idle, staying paused" so repeated AUDIO_START_CMD retries
+/* Dedups "Waiting for USB host audio" so repeated REQ_PLAY_CMD retries
  * (from the headset's stream watchdog) don't spam the log every 5 s.
  */
-static bool usb_idle_start_cmd_logged;
+static bool usb_idle_logged;
 #endif
 
 /* Function for handling all stream state changes */
@@ -98,48 +99,88 @@ uint8_t stream_state_get(void)
 /**
  * @brief Drive the Audio Streaming LED (FR-015) from the current stream state
  *        and USB host audio activity. See src/modules/audio_led/audio_led.c.
+ *
+ * Held OFF until a client is connected: on boards where this LED shares an
+ * index with zego_ux's Wi-Fi ROTATE sweep (idx 1 of 0-3 on nRF54LM20DK),
+ * lighting it for USB-ready alone would cancel the connecting animation.
  */
 static void audio_stream_led_update(void)
 {
+	if (!socket_connected_signall) {
+		audio_led_update(false, false);
+		return;
+	}
+
 	audio_led_update(strm_state == STATE_STREAMING, audio_usb_host_audio_active());
+}
+
+/**
+ * @brief Single source of truth for whether the gateway should be streaming:
+ *        re-run after every change to user_request, usb_output_active, or
+ *        socket_connected_signall.
+ */
+static void gateway_reevaluate_stream(void)
+{
+	bool should_stream =
+		(user_request == REQ_PLAY) && usb_output_active && socket_connected_signall;
+
+	if (should_stream) {
+		usb_idle_logged = false;
+		if (strm_state != STATE_STREAMING) {
+			LOG_INF("Starting/resuming stream");
+			stream_state_set(STATE_STREAMING);
+			audio_system_encoder_start();
+		}
+	} else if (strm_state == STATE_STREAMING) {
+		LOG_INF("Stopping stream");
+		audio_system_encoder_stop();
+		stream_state_set(STATE_PAUSED);
+	} else if (user_request == REQ_PLAY && socket_connected_signall &&
+		   !usb_output_active && !usb_idle_logged) {
+		LOG_INF("Waiting for USB host audio before streaming");
+		usb_idle_logged = true;
+	}
+
+	/* Refresh the LED for the branches above that didn't change stream state
+	 * (stream_state_set() already refreshed it for the ones that did).
+	 */
+	audio_stream_led_update();
 }
 
 void streamctrl_handle_client_disconnect(void)
 {
-	stream_paused_by_user = false;
-
-	if (strm_state != STATE_STREAMING) {
-		return;
-	}
-
-	LOG_INF("Station disconnected, pausing audio stream");
-	audio_system_encoder_stop();
-	stream_state_set(STATE_PAUSED);
+	LOG_INF("Client disconnected");
+	user_request = REQ_PLAY;
+	gateway_reevaluate_stream();
 }
 
 void streamctrl_handle_usb_audio_active(bool active)
 {
-	if (socket_connected_signall) {
-		if (active && strm_state != STATE_STREAMING && !stream_paused_by_user) {
-			LOG_INF("USB host audio detected, resuming stream");
-			stream_state_set(STATE_STREAMING);
-			audio_system_encoder_start();
-		} else if (!active && strm_state == STATE_STREAMING) {
-			LOG_INF("USB host audio idle, pausing stream");
-			audio_system_encoder_stop();
-			stream_state_set(STATE_PAUSED);
-		}
+	usb_output_active = active;
+	gateway_reevaluate_stream();
+}
+
+/* The headset's stream watchdog only sends KEEP_ALIVE_CMD while it isn't
+ * actively receiving frames, so once real streaming is flowing there is no
+ * more uplink traffic at all - but net_event_app.c's client-liveness eviction
+ * still needs proof the client is alive. While actually streaming, the
+ * gateway is that proof itself: refresh liveness locally instead of relying
+ * on the (now silent) client.
+ */
+#define STREAMING_LIVENESS_REFRESH_PERIOD_SEC 5
+
+static struct k_work_delayable streaming_liveness_refresh_work;
+
+static void streaming_liveness_refresh_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (strm_state == STATE_STREAMING) {
+		net_event_app_client_seen();
 	}
 
-	if (active) {
-		usb_idle_start_cmd_logged = false;
-	}
-
-	/* Always refresh the LED, even with no client connected yet, so it
-	 * reflects USB availability as soon as it changes (stream_state_set()
-	 * above already refreshed it for the branches that changed state).
-	 */
-	audio_stream_led_update();
+	k_work_reschedule(&streaming_liveness_refresh_work,
+			  K_SECONDS(STREAMING_LIVENESS_REFRESH_PERIOD_SEC));
 }
 #endif
 
@@ -162,39 +203,27 @@ void socket_rx_handler(uint8_t *socket_rx_buf, size_t len)
 			net_event_app_client_seen();
 
 			switch (command) {
-			case AUDIO_START_CMD:
-				stream_paused_by_user = false;
-				if (!audio_usb_host_audio_active()) {
-					/* Client is asking to (re)start while the PC is not
-					 * playing anything. Stay paused; the USB
-					 * host-activity hook resumes once real audio
-					 * returns.
-					 */
-					if (!usb_idle_start_cmd_logged) {
-						LOG_INF("STATE_STREAMING Command received - USB "
-							"host idle, staying paused");
-						usb_idle_start_cmd_logged = true;
-					}
-					stream_state_set(STATE_PAUSED);
-					break;
-				}
-				usb_idle_start_cmd_logged = false;
-				LOG_INF("STATE_STREAMING Command received");
-				stream_state_set(STATE_STREAMING);
-				audio_system_encoder_start();
+			case REQ_PLAY_CMD:
+				user_request = REQ_PLAY;
+				LOG_INF("REQ_PLAY command received");
+				gateway_reevaluate_stream();
 				break;
-			case AUDIO_STOP_CMD:
-				stream_paused_by_user = true;
-				LOG_INF("STATE_PAUSED Command received");
-				audio_system_encoder_stop();
-				stream_state_set(STATE_PAUSED);
+			case REQ_PAUSE_CMD:
+				user_request = REQ_PAUSE;
+				LOG_INF("REQ_PAUSE command received");
+				gateway_reevaluate_stream();
 				break;
-			case AUDIO_KEEPALIVE_CMD:
-				/* Nothing to do: simply receiving it has already refreshed
-				 * the peer address and connected flag in socket_utils.
+			case KEEP_ALIVE_CMD: {
+				/* Peer address/connected flag already refreshed in socket_utils
+				 * by just receiving this; ACK back so the headset can confirm
+				 * the gateway is actually still alive, not just reachable.
 				 */
-				LOG_DBG("Keepalive received");
+				uint8_t seq = (len >= 7) ? socket_rx_buf[4] : 0;
+
+				LOG_INF("Keepalive received (seq=%u), ACK sent", seq);
+				send_keepalive_command(KEEP_ALIVE_ACK_CMD, seq);
 				break;
+			}
 			default:
 				LOG_INF("Unknown command received: 0x%02X\n", command);
 				break;
@@ -217,11 +246,11 @@ void streamctrl_send(void const *const data, size_t size)
 /*
  * Button number assignments (zego BUTTON_CHAN, 0-based index):
  *   0 = sw0: mode print/cycle (handled by ux.c)
- *   1 = sw1: VOL_UP (unused in gateway)
- *   2 = sw2: PLAY_PAUSE
+ *   1 = sw1: PLAY_PAUSE
+ *   2 = sw2: unused in gateway
  *   3 = sw3: BTN4 / test tone
  */
-#define APP_BTN_PLAY_PAUSE 2
+#define APP_BTN_PLAY_PAUSE 1
 #define APP_BTN_TEST_TONE  3
 
 /**
@@ -251,21 +280,12 @@ static void button_msg_sub_thread(void)
 		switch (msg.button_number) {
 		case APP_BTN_PLAY_PAUSE:
 			if (socket_connected_signall == true) {
-				if (strm_state == STATE_STREAMING) {
-					audio_system_encoder_stop();
-					LOG_INF("STATE_PAUSED");
-					stream_paused_by_user = true;
-					stream_state_set(STATE_PAUSED);
-
-				} else if (strm_state == STATE_PAUSED) {
-					LOG_INF("STATE_STREAMING");
-					stream_paused_by_user = false;
-					stream_state_set(STATE_STREAMING);
-					audio_system_encoder_start();
-
-				} else {
-					LOG_WRN("In invalid state: %d", strm_state);
-				}
+				user_request = (user_request == REQ_PLAY) ? REQ_PAUSE : REQ_PLAY;
+				LOG_INF("%s (local button)",
+					user_request == REQ_PLAY ? "REQ_PLAY" : "REQ_PAUSE");
+				send_audio_command(user_request == REQ_PLAY ? REQ_PLAY_CMD
+											      : REQ_PAUSE_CMD);
+				gateway_reevaluate_stream();
 			} else {
 				LOG_WRN("Please wait for socket client to connect.");
 			}
@@ -461,6 +481,12 @@ int main(void)
 	ERR_CHK(ret);
 
 	net_event_app_init();
+
+#if defined(CONFIG_SOCKET_ROLE_SERVER)
+	k_work_init_delayable(&streaming_liveness_refresh_work, streaming_liveness_refresh_handler);
+	k_work_reschedule(&streaming_liveness_refresh_work,
+			  K_SECONDS(STREAMING_LIVENESS_REFRESH_PERIOD_SEC));
+#endif
 
 	/* Network LED driven by zego/bricks/ux via ZEGO_UX_WIFI_STATE_CHAN
 	 * (ROTATE = connecting)

@@ -17,16 +17,24 @@
  * explicit, sender-written tag rather than being inferred from "has no header".
  */
 #define SEND_DATA_TAIL_SIGN 0x02
-#define AUDIO_START_CMD  0x00
-#define AUDIO_STOP_CMD   0x01
+#define REQ_PLAY_CMD  0x00
+#define REQ_PAUSE_CMD 0x01
 /* Client->server liveness ping. Carries no state change; its only job is to keep
  * uplink traffic flowing so the AP does not disassociate the (otherwise
  * receive-only) client for inactivity, and to re-teach the server the client's
  * address after the server's socket has been torn down and rebound.
  */
-#define AUDIO_KEEPALIVE_CMD 0x02
+#define KEEP_ALIVE_CMD 0x02
+/* Server->client reply to KEEP_ALIVE_CMD, confirming the gateway actually saw it. */
+#define KEEP_ALIVE_ACK_CMD 0x03
 
 void send_audio_command(uint8_t audio_command);
+
+/**
+ * @brief Send KEEP_ALIVE_CMD or KEEP_ALIVE_ACK_CMD with a sequence number, so
+ *        the receiver can log/correlate which ping an ACK answers.
+ */
+void send_keepalive_command(uint8_t audio_command, uint8_t seq);
 
 void send_audio_frame(uint8_t *audio_data, size_t data_length);
 

@@ -173,6 +173,23 @@ void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size)
 	bool is_head;
 	bool is_tail;
 
+	/* Command frames (REQ_PLAY_CMD/REQ_PAUSE_CMD/KEEP_ALIVE_ACK_CMD from the
+	 * gateway) use the same start/cmd/end framing as gateway-bound commands,
+	 * not the audio head/tail framing below - recognize and discard them here
+	 * so they don't get counted as a desync. 6 bytes (no seq) or 7 bytes
+	 * (KEEP_ALIVE_ACK_CMD's echoed seq, see send_keepalive_command()).
+	 */
+	if ((data_size == 6 || data_size == 7) && p_data[0] == START_SEQUENCE_1 &&
+	    p_data[1] == START_SEQUENCE_2 && p_data[2] == SEND_CMD_SIGN &&
+	    p_data[data_size - 2] == END_SEQUENCE_1 && p_data[data_size - 1] == END_SEQUENCE_2) {
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
+		uint8_t seq = (data_size == 7) ? p_data[4] : 0;
+
+		streamctrl_handle_gateway_command(p_data[3], seq);
+#endif
+		return;
+	}
+
 	is_head = (data_size >= HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
 		   p_data[1] == START_SEQUENCE_2 && p_data[2] == SEND_DATA_SIGN);
 	is_tail = (!is_head && data_size >= TAIL_HEADER_SIZE && p_data[0] == START_SEQUENCE_1 &&
@@ -320,13 +337,23 @@ void send_audio_command(uint8_t audio_command)
 		START_SEQUENCE_1, // 0xFF
 		START_SEQUENCE_2, // 0xAA
 		SEND_CMD_SIGN,    // 0x00 command; 0x01 data
-		audio_command,    // Command: Variable (e.g., AUDIO_START_CMD or AUDIO_STOP_CMD)
+		audio_command,    // Command: Variable (e.g., REQ_PLAY_CMD or REQ_PAUSE_CMD)
 		END_SEQUENCE_1,   // 0xFF
 		END_SEQUENCE_2    // 0xBB
 	};
 
 	size_t packet_size = sizeof(command_packet); // Calculate packet size
 	socket_utils_tx_data((uint8_t *)command_packet, packet_size);
+}
+
+void send_keepalive_command(uint8_t audio_command, uint8_t seq)
+{
+	uint8_t command_packet[] = {
+		START_SEQUENCE_1, START_SEQUENCE_2, SEND_CMD_SIGN, audio_command, seq,
+		END_SEQUENCE_1,   END_SEQUENCE_2
+	};
+
+	socket_utils_tx_data((uint8_t *)command_packet, sizeof(command_packet));
 }
 
 void send_audio_frame(uint8_t *audio_data, size_t data_length)
