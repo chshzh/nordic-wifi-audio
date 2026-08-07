@@ -95,8 +95,8 @@ actions, or are free on gateway-only boards:
 | Board | Wi-Fi control button | Other buttons |
 |-------|-----------------------|----------------|
 | nRF5340 Audio DK + nRF7002EK | BTN5 (idx 4) | VOL- (idx 0) Volume Down, VOL+ (idx 1) Volume Up, PLAY/PAUSE (idx 2) Play/Pause, BTN4 (idx 3) test tone |
-| nRF7002DK | Button 1 / SW0 (idx 0) | Button 2 / SW1 (idx 1) — available (no default audio function, gateway only) |
-| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | BUTTON1–2 (idx 1–2) — available (no default audio function, gateway only) |
+| nRF7002DK | Button 1 / SW0 (idx 0) | Button 2 / SW1 (idx 1) Play/Pause |
+| nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | BUTTON1 (idx 1) Play/Pause, BUTTON2 (idx 2) — available (no default audio function) |
 
 **Wi-Fi control button gestures** (same on every board):
 
