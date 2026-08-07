@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-07-09-29 |
-| PRD Version | 2026-06-26-11-29 |
+| Version | 2026-08-07-15-54 |
+| PRD Version | 2026-08-07-15-52 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-07-15-54 | Updated to PRD v2026-08-07-15-52. Renamed `enum audio_user_request { AUDIO_PLAY, AUDIO_PAUSE }` → `{ REQ_PLAY, REQ_PAUSE }` and the wire commands `AUDIO_START_CMD`/`AUDIO_STOP_CMD` → `REQ_PLAY_CMD`/`REQ_PAUSE_CMD` (0x00/0x01 unchanged); the separate `stream_paused_by_user` flag documented below is gone — superseded by the `user_request` enum itself, which already distinguishes an explicit pause from a USB-idle auto-pause. Keepalive redesigned: the headset now sends `KEEP_ALIVE_CMD` (0x02) unconditionally every 5 s with an incrementing sequence number — not just as a stalled-stream nudge — and the gateway replies with `KEEP_ALIVE_ACK_CMD` (0x03, echoing the sequence). This is the sole proof-of-life signal a departing client leaves behind (see `docs/dev-specs/network-module.md` for the gateway-side 15 s liveness eviction it feeds). Reduced the headset's jitter-buffer target (`PREBUF_TARGET_BLKS`, `audio_datapath.c`) from 80 to 10 blocks (~70 ms less steady-state audio latency) based on real hardware gap measurements via the new `audio_rx_stats` shell command (`wifi_audio_rx.c`) — see "Jitter Buffer Latency" below. |
 | 2026-08-07-09-29 | Replaced the gateway's boolean `stream_paused_by_user` with an explicit `enum audio_user_request { AUDIO_PLAY, AUDIO_PAUSE }` and a single `gateway_reevaluate_stream()` that AND-gates streaming on `user_request == AUDIO_PLAY`, USB host output being active, and a client being connected. The local PLAY_PAUSE button now also sends `AUDIO_START_CMD`/`AUDIO_STOP_CMD` to the headset (previously only the headset's button notified the gateway — the gateway's button was a one-sided local toggle), so `user_request`-equivalent intent stays in sync on both sides. Added `streamctrl_handle_gateway_command()` on the headset (`CONFIG_SOCKET_ROLE_CLIENT`) plus command-frame recognition in `wifi_audio_rx_data_handler()` so the headset can receive these gateway-originated commands over the same UDP command channel. See "Audio Streaming State Machine" below. |
 | 2026-08-07-09-00 | Replaced PCM-content-based USB host-idle detection with transport-level detection: `host_audio_active` now mirrors the USB OUT terminal's enable/disable state (`terminal_update_cb()`) directly instead of a sample-amplitude timeout (`host_audio_activity_check()`, removed). Real USB isochronous OUT transfers don't stop during a quiet passage or in-track silence, so the old content-based heuristic was pausing the Wi-Fi stream (and draining the headset's jitter buffer) on ordinary quiet music, not just genuine host-idle periods — likely the dominant cause of `Jitter buffer ran dry` events seen throughout testing. See "USB Host Audio-Activity Detection" below. |
 | 2026-08-06-19-45 | Added `stream_paused_by_user` (gateway only) so an explicit pause (`AUDIO_STOP_CMD` or local PLAY_PAUSE button) stays paused even if the USB host resumes sending audio — previously `streamctrl_handle_usb_audio_active()`'s auto-resume only checked `strm_state == STATE_PAUSED`, which couldn't distinguish an explicit pause from a USB-idle auto-pause. See "Explicit pause vs. auto-pause" under Audio Streaming State Machine below. |
@@ -78,7 +79,8 @@ Command (single datagram, always fits in one send):
 │ 0xFF     │ 0xAA     │ 0x00 │ CMD     │ 0xFF     │ 0xBB     │
 │ START_1  │ START_2  │ TYPE │         │ END_1    │ END_2    │
 └──────────┴──────────┴──────┴─────────┴──────────┴──────────┘
-CMD: 0x00 = REQ_PLAY, 0x01 = REQ_PAUSE, 0x02 = KEEP_ALIVE
+CMD: 0x00 = REQ_PLAY, 0x01 = REQ_PAUSE, 0x02 = KEEP_ALIVE, 0x03 = KEEP_ALIVE_ACK
+(KEEP_ALIVE/KEEP_ALIVE_ACK carry an extra sequence byte before END_1 - 7 bytes total)
 
 Audio frame, head fragment (always sent first):
 ┌──────────┬──────────┬──────┬───────────────────┬────────────────────┐
@@ -204,46 +206,52 @@ implemented in `wifi_audio_gateway/main.c` alongside
 `enum stream_state` (`STATE_STREAMING` / `STATE_PAUSED`, `streamctrl.h`) is
 tracked independently on each side. On the gateway it is derived state, not
 source of truth: the gateway also keeps an explicit `enum audio_user_request
-{ AUDIO_PLAY, AUDIO_PAUSE }` (`wifi_audio_gateway/main.c`) representing what
+{ REQ_PLAY, REQ_PAUSE }` (`wifi_audio_gateway/main.c`) representing what
 the user has asked for, independent of whether the encoder is actually
 running. A single function, `gateway_reevaluate_stream()`, re-derives
 `strm_state` from three inputs every time any of them changes:
 
 ```
-should_stream = (user_request == AUDIO_PLAY)
+should_stream = (user_request == REQ_PLAY)
                 && usb_output_active
                 && socket_connected_signall
 ```
 
+This AND-gate is also what distinguishes an explicit pause from a USB-idle
+auto-pause: an explicit `REQ_PAUSE_CMD` (or the local PLAY_PAUSE button's
+pause branch) sets `user_request = REQ_PAUSE`, which alone forces
+`should_stream` false regardless of USB host activity — the USB-activity
+input auto-resuming later cannot override it, since `user_request` is only
+ever changed by an explicit play/pause source (never by USB activity itself).
+
 On the headset, `strm_state` itself doubles as the user-request state (there
 is no separate USB-activity or client-connect gate on that side).
 
-The UDP command protocol (`AUDIO_START_CMD` / `AUDIO_STOP_CMD` /
-`AUDIO_KEEPALIVE_CMD`, see UDP Frame Protocol above) keeps `user_request`
-(gateway) and `strm_state` (headset) in sync in **both directions**: the
-headset's PLAY_PAUSE button and auto-start/watchdog send commands to the
-gateway as before, and the gateway's own local PLAY_PAUSE button now also
-sends a command to the headset (`streamctrl_handle_gateway_command()`,
-`CONFIG_SOCKET_ROLE_CLIENT`, dispatched from a command-frame check in
-`wifi_audio_rx_data_handler()`) — closing a previous asymmetry where only the
-headset's button notified the peer. Six independent sources can flip the
-state:
+The UDP command protocol (`REQ_PLAY_CMD` / `REQ_PAUSE_CMD` /
+`KEEP_ALIVE_CMD` / `KEEP_ALIVE_ACK_CMD`, see UDP Frame Protocol above) keeps
+`user_request` (gateway) and `strm_state` (headset) in sync in **both
+directions**: the headset's PLAY_PAUSE button sends commands to the gateway,
+and the gateway's own local PLAY_PAUSE button also sends a command to the
+headset (`streamctrl_handle_gateway_command()`, `CONFIG_SOCKET_ROLE_CLIENT`,
+dispatched from a command-frame check in `wifi_audio_rx_data_handler()`) —
+closing a previous asymmetry where only the headset's button notified the
+peer. Five independent sources can flip the state:
 
 | # | Trigger | Side | Effect |
 |---|---|---|---|
 | 1 | Wi-Fi connect/disconnect (`net_event_app.c` hooks) | Both | Disconnect: `audio_system_encoder_stop()` directly (see known gap below). Connect: peer address set → source #2 below fires next |
-| 2 | Socket target resolved (`socket_target_ready_handler()`) | Headset only | `STATE_STREAMING`, sends `AUDIO_START_CMD` |
-| 3 | `AUDIO_START_CMD` / `AUDIO_STOP_CMD` received | Gateway | Sets `user_request` to `AUDIO_PLAY`/`AUDIO_PAUSE`, then `gateway_reevaluate_stream()` |
-| 3b | `AUDIO_START_CMD` / `AUDIO_STOP_CMD` received | Headset | `streamctrl_handle_gateway_command()` sets `strm_state` directly |
+| 2 | Socket target resolved (`socket_target_ready_handler()`) | Headset only | `STATE_STREAMING`, sends `REQ_PLAY_CMD` |
+| 3 | `REQ_PLAY_CMD` / `REQ_PAUSE_CMD` received | Gateway | Sets `user_request` to `REQ_PLAY`/`REQ_PAUSE`, then `gateway_reevaluate_stream()` |
+| 3b | `REQ_PLAY_CMD` / `REQ_PAUSE_CMD` received | Headset | `streamctrl_handle_gateway_command()` sets `strm_state` directly |
 | 4 | USB host activity (`streamctrl_handle_usb_audio_active()`) | Gateway only | Sets `usb_output_active`, then `gateway_reevaluate_stream()` |
-| 5 | P2P/AP client connect/disconnect (`streamctrl_handle_client_disconnect()`) | Gateway only | Resets `user_request = AUDIO_PLAY`, then `gateway_reevaluate_stream()` (no client ⇒ `should_stream` is false regardless) |
+| 5 | P2P/AP client connect/disconnect (`streamctrl_handle_client_disconnect()`) | Gateway only | Resets `user_request = REQ_PLAY`, then `gateway_reevaluate_stream()` (no client ⇒ `should_stream` is false regardless) |
 | 6 | Local PLAY_PAUSE button | Both | Manual toggle. Headset: sends the matching command to the gateway. Gateway: toggles `user_request`, sends the matching command to the headset, then `gateway_reevaluate_stream()` |
 
 ```mermaid
 stateDiagram-v2
     state "Gateway" as GW {
         [*] --> GW_PAUSED
-        GW_PAUSED --> GW_STREAMING : should_stream becomes true\n(user_request==AUDIO_PLAY\nAND usb_output_active\nAND socket_connected_signall)
+        GW_PAUSED --> GW_STREAMING : should_stream becomes true\n(user_request==REQ_PLAY\nAND usb_output_active\nAND socket_connected_signall)
         GW_STREAMING --> GW_PAUSED : should_stream becomes false\n(any of the three inputs flips)
     }
 ```
@@ -252,20 +260,32 @@ stateDiagram-v2
 stateDiagram-v2
     state "Headset" as HS {
         [*] --> HS_PAUSED
-        HS_PAUSED --> HS_STREAMING : socket target resolved\n(auto-start; sends AUDIO_START_CMD)
-        HS_STREAMING --> HS_STREAMING : stream watchdog (every 5 s):\nRX frame count unchanged\n→ re-send AUDIO_START_CMD (no local\nstate change - this only nudges the gateway)
+        HS_PAUSED --> HS_STREAMING : socket target resolved\n(auto-start; sends REQ_PLAY_CMD)
+        HS_STREAMING --> HS_STREAMING : stream watchdog (every 5 s):\nsends KEEP_ALIVE_CMD unconditionally\n(proof-of-life for gateway's 15 s\nclient-liveness eviction, see\nnetwork-module.md)
     }
 ```
 
 The headset's stream watchdog (`wifi_audio_headset/main.c`,
-`stream_watchdog_handler()`) exists specifically to recover from the scenario
-in the Known Limitation above: the link is downlink-only, so the headset
-never generates the traffic that would keep a P2P_GO's inactivity accounting
-happy, and once the gateway pauses on a client disconnect nothing would
-otherwise re-trigger it. Every 5 s the headset checks whether
-`wifi_audio_rx_frame_count()` has advanced; if not (and it believes it should
-be streaming), it re-sends `AUDIO_START_CMD` — which also doubles as a
-keepalive that refreshes the gateway's notion of the client's address.
+`stream_watchdog_handler()`) sends `KEEP_ALIVE_CMD` (with an incrementing
+sequence number) every 5 s **unconditionally, including while actively
+streaming** — this is deliberate: the link is downlink-only, so without it
+the headset would generate zero uplink traffic while streaming, and a
+peer that vanishes without a deauth (e.g. power-cut) would only be purged by
+the nRF70's own ~300 s stale-station timer instead of the gateway's 15 s
+app-level eviction (see `docs/dev-specs/network-module.md`). The gateway
+replies with `KEEP_ALIVE_ACK_CMD` (echoing the sequence number), and both
+directions count as "client seen" for the liveness timer.
+
+> **Cost of this design**: sending `KEEP_ALIVE_CMD`/`KEEP_ALIVE_ACK_CMD`
+> during active streaming contends with `send_audio_frame()` for Wi-Fi TX and
+> was measured (via `audio_rx_stats`, see below) to add up to ~55 ms of extra
+> jitter-buffer gap on some hardware runs — a factor in choosing the reduced
+> `PREBUF_TARGET_BLKS` (see "Jitter Buffer Latency" below). Sending it only
+> while stalled removes that contention but reintroduces the ~300 s
+> worst-case recovery; this tradeoff was deliberately accepted in favor of
+> lower latency, and is a candidate for future improvement (e.g. lower
+> keepalive frequency, or a receiver-aware Wi-Fi TX-failure signal) rather
+> than reducing the buffer further.
 
 > **⚠️ Known gap:** `zego_on_net_event_wifi_disconnect()` and
 > `zego_on_net_event_wifi_ap_sta_disconnected()` (`net_event_app.c`) call
@@ -274,32 +294,30 @@ keepalive that refreshes the gateway's notion of the client's address.
 > stay `STATE_STREAMING` after a Wi-Fi disconnect even though the encoder has
 > stopped. Not currently a functional bug in the default P2P builds — the
 > headset always calls `stream_state_set(STATE_STREAMING)` unconditionally on
-> reconnect, and the gateway re-derives its state from the next `AUDIO_START_CMD`
+> reconnect, and the gateway re-derives its state from the next `REQ_PLAY_CMD`
 > / USB-activity event — but worth fixing if `stream_state_get()` is ever relied
 > on as a source of truth immediately after a disconnect.
 
-### Explicit pause vs. auto-pause (`stream_paused_by_user`)
+## Jitter Buffer Latency
 
-Hardware testing showed the USB-activity auto-resume (source #4) would
-override an explicit pause: if the user paused via the headset's PLAY_PAUSE
-button (`AUDIO_STOP_CMD`) while the USB host kept sending audio, the very
-next `streamctrl_handle_usb_audio_active(true)` call would resume streaming
-anyway, since it only checked `strm_state == STATE_PAUSED` — with no way to
-tell an explicit pause from a USB-idle auto-pause.
+`PREBUF_TARGET_BLKS` (`src/audio/audio_datapath.c`, 1 block = 1 ms) is both
+the headset's startup/refill gate (playback stays muted until this many
+blocks are queued) and the steady-state operating point that
+`rate_ctrl_update()` continuously servos the I2S sample clock (APLL) toward
+— it is a permanent, continuously-maintained latency tax on every sample,
+not a one-time startup cost or a rarely-used cushion.
 
-`wifi_audio_gateway/main.c` now tracks a `stream_paused_by_user` flag
-(`CONFIG_SOCKET_ROLE_SERVER` only) alongside `strm_state`:
+Lowered from 80 to 10 blocks (2026-08-07) after re-measuring real inter-frame
+gaps with the `audio_rx_stats` shell command (`wifi_audio_rx.c` — prints and
+resets `rx_frames_ok`/`rx_lost_head`/`rx_lost_tail`/`rx_fifo_overruns`/
+`rx_max_gap_ms` on demand). A `PREBUF_TARGET_BLKS=0` diagnostic pass (which
+makes the jitter-buffer's own "refilled after N ms mute" log report the raw
+inter-arrival gap directly) measured real gaps up to 55 ms correlated with
+`KEEP_ALIVE_ACK_CMD` receipt; 10 was confirmed clear by ear on hardware once
+that contention was accounted for. See "Cost of this design" above for the
+keepalive/latency tradeoff this interacts with.
 
-- Set on `AUDIO_STOP_CMD` and on the local PLAY_PAUSE button's pause branch.
-- Cleared on `AUDIO_START_CMD`, the local PLAY_PAUSE button's resume branch,
-  and on client disconnect (a fresh connection must not inherit a stale
-  pause from a previous session).
-- `streamctrl_handle_usb_audio_active()`'s auto-resume branch additionally
-  requires `!stream_paused_by_user` — the auto-pause branch (USB goes idle)
-  is unaffected by and does not set the flag, so the existing auto-pause/
-  auto-resume cycle for a merely-idle USB host is preserved.
 
-## Kconfig Flags
 
 | Symbol | Description | Default |
 |---|---|---|
@@ -350,7 +368,8 @@ int  audio_system_encode_test_tone_step(void);
 ```c
 int  wifi_audio_rx_init(void);
 void wifi_audio_rx_data_handler(uint8_t *p_data, size_t data_size);
-void send_audio_command(uint8_t audio_command);   /* AUDIO_START_CMD / AUDIO_STOP_CMD */
+void send_audio_command(uint8_t audio_command);   /* REQ_PLAY_CMD / REQ_PAUSE_CMD */
+void send_keepalive_command(uint8_t audio_command, uint8_t seq); /* KEEP_ALIVE_CMD / KEEP_ALIVE_ACK_CMD */
 void send_audio_frame(uint8_t *audio_data, size_t data_length);
 ```
 
@@ -397,3 +416,10 @@ void    streamctrl_handle_client_disconnect(void); /* SERVER role only */
 | `Drft comp state: CALIB` | Drift compensation calibrating |
 | `Drft comp state: STEADY` | Drift compensation converged |
 | `wifi_audio_rx: init done` | RX path ready |
+
+On-demand diagnostic: the `audio_rx_stats` shell command (headset,
+`wifi_audio_rx.c`) prints and resets
+`RX frames ok=/lost_head=/lost_tail=/fifo_ovr=/max_gap_ms=` — use this to
+measure real inter-frame gaps when tuning `PREBUF_TARGET_BLKS`, instead of
+waiting on the periodic 5 s LOG_INF summary (which requires 500 continuous
+frames to fire).

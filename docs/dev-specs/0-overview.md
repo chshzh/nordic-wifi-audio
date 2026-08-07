@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-04-13-08 |
-| PRD Version | 2026-08-04-10-56 |
+| Version | 2026-08-07-15-58 |
+| PRD Version | 2026-08-07-15-52 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-07-15-58 | Updated to PRD v2026-08-07-15-52 (code-driven sync, 4 undeclared commits/in-progress changes since 2026-08-04-13-08). Gateway boards gained a physical Play/Pause button (idx 1) mirroring the Headset; protocol renamed `AUDIO_PLAY`/`AUDIO_START_CMD` → `REQ_PLAY`/`REQ_PLAY_CMD` (and `AUDIO_PAUSE`/`AUDIO_STOP_CMD` → `REQ_PAUSE`/`REQ_PAUSE_CMD`); fixed a stale-socket-target bug that could leave a reconnecting client's `REQ_PLAY_CMD` silently ignored after the 15 s liveness eviction fired; reduced the headset's jitter-buffer latency from ~80 ms to ~10 ms based on real hardware gap measurements. See [audio-pipeline.md](audio-pipeline.md) and [network-module.md](network-module.md) Changelogs for full detail. |
 | 2026-08-04-13-08 | **Bug fix (found via hardware test):** P2P_GO gateway's LED 0 stayed in ROTATE after a client connected. Fixed in `zego/bricks/network` (mode field in `zego_on_net_event_wifi_ap_sta_connected()`'s weak default was hardcoded to SOFTAP) and removed this app's now-redundant override of that hook. See [network-module.md](network-module.md) Changelog. |
 | 2026-08-04-12-20 | **Bug fix (found via hardware test):** `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` on nRF5340 Audio DK was left at its default (0) instead of matching `CONFIG_ZEGO_UX_BUTTON_IDX=4` (BTN5) — the 10 s hold silently did nothing on that board. See [board-init-module.md](board-init-module.md) and [ui-module.md](ui-module.md) Changelogs. |
 | 2026-08-04-10-58 | Updated to PRD v2026-08-04-10-56: added FR-014 factory reset. `zego` bumped v3.4.0.2→v3.4.0.3 (adds `zego/bricks/factory_reset`). New design decisions: (1) `zego/bricks/factory_reset` registered as an `EXTRA_ZEPHYR_MODULE` (`CONFIG_ZEGO_FACTORY_RESET=y`) — erases stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboots; (2) `CONFIG_ZEGO_BUTTON_LONGER_PRESS_MS=10000` enables the button brick's guarded two-tier hold on the mode-control button, so the existing 3 s mode-cycle gesture (`src/modules/ux/ux.c`'s `zego_ux_on_long_press()` override, unchanged) now fires at release instead of immediately, and is superseded by factory reset at 10 s; (3) shell trigger (`zego_factory_reset`) and button trigger both work on all boards (`CONFIG_SHELL=y` globally). See [ui-module.md](ui-module.md). |

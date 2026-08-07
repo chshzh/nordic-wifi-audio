@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-06-17-30 |
-| PRD Version | 2026-08-04-10-56 |
+| Version | 2026-08-07-15-56 |
+| PRD Version | 2026-08-07-15-52 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
 | Status | In Review |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-07-15-56 | Updated to PRD v2026-08-07-15-52. **Bug fix:** the 15 s client-liveness eviction (2026-08-06-17-30 below) correctly force-disconnected a stale P2P client, but `socket_connected_signall` (`socket_utils.c`) was never cleared afterward — the UDP recv loop only clears it on `recvfrom() <= 0`, which a departing peer never causes — so `gateway_reevaluate_stream()`'s AND-gate (see audio-pipeline.md) stayed satisfied with the encoder already stopped, and the next `REQ_PLAY_CMD` from a reconnecting client was a silent no-op. `socket_utils_clear_target()` (previously `CONFIG_SOCKET_ROLE_CLIENT`-only) is now available to the SERVER role too, called from `zego_on_net_event_wifi_ap_sta_disconnected()` before `streamctrl_handle_client_disconnect()`. Hardware-confirmed: a headset power-cut mid-stream now recovers ~8 s after the 15 s eviction fires (~23 s total), down from ~4 m 52 s with this bug present. (Mid-session, keepalive-during-streaming was briefly made conditional to cut Wi-Fi TX contention with `send_audio_frame()`, with a matching gate added here so a healthy quiet stream wouldn't be evicted; both were reverted back to unconditional after the headset's jitter-buffer target was lowered instead as the latency fix — see audio-pipeline.md.) |
 | 2026-08-06-17-30 | Implemented and hardware-validated the app-level client liveness eviction described as a planned mitigation in the previous entry (`net_event_app.c`: `net_event_app_init()` / `net_event_app_client_seen()`). Added the "Client Liveness Eviction (Gateway)" section below and updated the Known Limitation callout to reflect that this is now shipped, not future work. Measured recovery on hardware: ~20 s total (disconnect → WPS re-arm → reconnect → streaming resumed), down from 300 s+. |
 | 2026-08-06-15-00 | Added the "Wi-Fi Connection State Machine" section: a role-generic state diagram covering DISCONNECTED → CONNECTING → ASSOCIATED → READY, with the exact hook that fires each transition. Documents a hardware-tested finding: the nRF70 P2P_GO's station-inactivity accounting does not reset on real client traffic, so a live client can be spuriously disassociated (`reason=4`) — this is a pre-existing driver defect (see [zego/patches/hostap/README.md](../../../zego/patches/hostap/README.md) for the investigation), not something fixable from this app. |
 | 2026-08-04-13-08 | **Bug fix (found via hardware test):** the P2P_GO gateway's LED 0 stayed in ROTATE after a client connected. Root cause: this app's `zego_on_net_event_wifi_ap_sta_connected()` override only logged and never actually published `ZEGO_UX_WIFI_STATE_CONNECTED` (an incomplete edit predating this session), and separately, `zego/network`'s own `__weak` default for that hook hardcoded `.mode = ZEGO_WIFI_MODE_SOFTAP`. Fixed the mode field in the zego brick default (see `zego/bricks/network/docs/network-spec.md`) and **removed this app's override entirely** — the corrected brick default now covers both SoftAP and P2P_GO correctly, so no app-level workaround is needed. Corrected two stale claims below that predated this fix: `dhcp_bound()` does **not** fire for P2P_GO (only STA/P2P_GC) — P2P_GO's CONNECTED state comes solely from `ap_sta_connected()`. |
@@ -96,9 +97,9 @@ for this):
    `_DISCONNECTED` captures the connected station's MAC (`struct
    wifi_ap_sta_info.mac` from `cb->info`).
 2. `net_event_app_client_seen()` — called from `wifi_audio_gateway/main.c`'s
-   `socket_rx_handler()` on every valid command frame (START/STOP/KEEPALIVE
-   all count) — reschedules a `CLIENT_LIVENESS_TIMEOUT_SEC` (15 s)
-   `k_work_delayable`.
+   `socket_rx_handler()` on every valid command frame (`REQ_PLAY_CMD`/
+   `REQ_PAUSE_CMD`/`KEEP_ALIVE_CMD` all count) — reschedules a
+   `CLIENT_LIVENESS_TIMEOUT_SEC` (15 s) `k_work_delayable`.
 3. If it fires, the gateway calls
    `net_mgmt(NET_REQUEST_WIFI_AP_STA_DISCONNECT, iface, mac, WIFI_MAC_ADDR_LEN)`
    to force the disassociation itself, which drives the normal
@@ -128,8 +129,8 @@ in `src/modules/network/net_event_app.c`:
 | `zego_on_net_event_dhcp_bound(mode, ip, mac, ssid)` | STA: DHCP_BOUND event; P2P_GC: CONNECT_RESULT then real DHCP_BOUND (not P2P_GO) | **Start audio pipeline + socket; publish CONNECTED** |
 | `zego_on_net_event_wifi_disconnect()` | Link lost (STA/P2P_GC disconnect result) | **Stop audio pipeline; publish ERROR** |
 | `zego_on_net_event_wifi_ap_enabled()` | P2P_GO AP ready (before clients connect) | Optional: log AP up |
-| `zego_on_net_event_wifi_ap_sta_connected(station_count, ip, mac)` | P2P_GO/SoftAP: each client joined | **Not overridden** — zego/network's `__weak` default publishes CONNECTED (mode-correct as of 2026-08-04); audio start is driven by the headset's `AUDIO_START_CMD`, not this hook |
-| `zego_on_net_event_wifi_ap_sta_disconnected(station_count)` | P2P_GO: client left | If station_count==0: **stop audio; publish ERROR** |
+| `zego_on_net_event_wifi_ap_sta_connected(station_count, ip, mac)` | P2P_GO/SoftAP: each client joined | **Not overridden** — zego/network's `__weak` default publishes CONNECTED (mode-correct as of 2026-08-04); audio start is driven by the headset's `REQ_PLAY_CMD`, not this hook |
+| `zego_on_net_event_wifi_ap_sta_disconnected(station_count)` | P2P_GO: client left | If station_count==0: **clear the stale socket target (`socket_utils_clear_target()`), then stop audio; publish ERROR** |
 
 **Key confirmed behavior (zego network-spec.md, changelog 2026-08-04/2026-06-14):**
 - `dhcp_bound` is the **unified "network ready" hook for STA and P2P_GC only** — P2P_GO never fires it; its CONNECTED state is published entirely by `ap_sta_connected()`'s zego-brick default instead (see fix above).

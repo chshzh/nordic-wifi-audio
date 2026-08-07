@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Product Name | Nordic Wi-Fi Audio |
-| Version | 2026-08-06-21-23 |
+| Version | 2026-08-07-15-52 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
 | Status | Approved |
@@ -18,6 +18,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-07-15-52 | Synced PRD with code changes since the last revision: (1) Gateway boards gained a physical Play/Pause button — nRF7002DK Button 2/SW1 (idx 1) and nRF54LM20DK BUTTON1 (idx 1) — mirroring the existing Headset gesture (§2.4 updated); wire protocol commands renamed AUDIO_PLAY/AUDIO_STOP → REQ_PLAY/REQ_PAUSE. (2) Fixed a bug where a Wi-Fi client that vanished mid-stream (e.g. power-cut) could take up to ~300 s to be detected and reconnected; an app-level 15 s liveness eviction plus an always-on keepalive now recovers audio in ~15-20 s. (3) Reduced the Headset's audio jitter-buffer depth from ~80 ms to ~10 ms based on real hardware gap measurements, cutting steady-state end-to-end audio latency by ~70 ms (FR-001). |
 | 2026-08-06-21-23 | Reversed the 21-04 fix per explicit user direction: RGB2 (idx 3–5) is Wi-Fi/Network Status again, RGB1 (idx 0–2) is the role indicator. Net effect vs. the pre-21-04 config: same RGB2-for-Wi-Fi assignment as originally shipped, but the conflict with the role indicator is gone since the role indicator now lives on RGB1 (not also on RGB2). Colors unchanged (Gateway green, Headset blue, per 21-10). |
 | 2026-08-06-21-10 | Swapped RGB2 role indicator colors: Gateway is now Green (was Blue), Headset is now Blue (was Green). `role_led_init()` in `src/modules/audio_led/audio_led.c` updated accordingly. |
 | 2026-08-06-21-04 | Bug fix: `boards/nrf5340_audio_dk_nrf5340_cpuapp.conf` had `CONFIG_ZEGO_UX_ROTATE_FIRST_LED`/`CONFIG_ZEGO_UX_CONNECTED_LED` pointed at RGB2 (idx 3-5), the same physical LEDs as the new RGB2 role indicator (FR-015 changelog above) — the two fought over RGB2, so the role color kept getting overwritten by Wi-Fi ROTATE/CONNECTED updates (this is why RGB2 never showed the role color reliably). Moved the Wi-Fi status ROTATE/CONNECTED/ERROR/PAIRING LEDs back to RGB1 (idx 0-2), matching what §2.4 always documented; RGB2 is now exclusively owned by `role_led_init()`. |
@@ -121,12 +122,13 @@ Without this demo, teams must build all audio plumbing from scratch — codec se
 | | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
 | | | Long press ≥ 3 s (fires at release) | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | | | Hold ≥ 10 s (fires immediately, no release needed) | Factory reset (FR-014) — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboot; supersedes the 3 s mode cycle for that press |
-| | Button 2 / SW1 (idx 1) | Any | Available (no default audio function — gateway only) |
+| | Button 2 / SW1 (idx 1) | Single click | Play / Pause audio stream |
 | nRF54LM20DK + nRF7002EB2 | BUTTON0 (idx 0) | Single click | Print current Wi-Fi state to UART |
 | | | Double-click | Trigger WPS PBC pairing (P2P modes only; see FR-013) |
 | | | Long press ≥ 3 s (fires at release) | Cycle mode (STA → P2P_GO → P2P_GC); save to NVS; reboot |
 | | | Hold ≥ 10 s (fires immediately, no release needed) | Factory reset (FR-014) — erase stored Wi-Fi credentials, saved Wi-Fi mode, and P2P GO MAC, then reboot; supersedes the 3 s mode cycle for that press |
-| | BUTTON1–2 (idx 1–2) | Any | Available (no default audio function — gateway only) |
+| | BUTTON1 (idx 1) | Single click | Play / Pause audio stream |
+| | BUTTON2 (idx 2) | Any | Available (no default audio function — gateway only) |
 
 
 ### LEDs
