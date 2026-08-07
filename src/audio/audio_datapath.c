@@ -100,10 +100,16 @@ int numDec = 0;                              /*Number of decoded samples or @ref
  * consumer drains each 10 ms frame on arrival, so any network jitter above
  * ~10 ms starves I2S and inserts an audible click. Costs this much latency. */
 /* Wi-Fi delivers frames in bursts: measured gaps of ~46 ms with zero frame loss, so the
- * buffer must ride out more than one gap. FIFO_NUM_BLKS is 120, leaving 40 blocks of
+ * buffer must ride out more than one gap. FIFO_NUM_BLKS is 120, leaving 110 blocks of
  * overrun headroom above this target.
- */
-#define PREBUF_TARGET_BLKS 80
+ * 2026-08-07: lowered from 80 after re-measuring real gaps with audio_rx_stats
+ * (src/audio/wifi_audio_rx.c) - with KEEP_ALIVE_CMD's TX contention against
+ * send_audio_frame() a factor again (re-enabled unconditionally, see
+ * wifi_audio_headset/main.c), HW-listening-tested clear at 10; 0 was audibly
+ * glitchy (constant fade in/out, confirmed via LOG_DBG "ran dry"/"refilled").
+ * If audible glitches correlate with KEEP_ALIVE_ACK_CMD receipt, raise this or
+ * lower the keepalive frequency rather than guessing - see audio_rx_stats. */
+#define PREBUF_TARGET_BLKS 10
 
 enum drift_comp_state {
 	DRIFT_STATE_INIT,   /* Waiting for data to be received */
@@ -783,8 +789,11 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					 */
 					ctrl_period_cnt = 0;
 					fill_sum = 0;
-					/* DIAG: pairs with the "ran dry" line below. */
-					LOG_WRN("Jitter buffer refilled after %u ms mute",
+					/* DIAG: pairs with the "ran dry" line below. LOG_DBG, not WRN -
+					 * fires on every underrun and floods/drops the log backend at
+					 * low PREBUF_TARGET_BLKS values.
+					 */
+					LOG_DBG("Jitter buffer refilled after %u ms mute",
 						ctrl_blk.out.total_blk_underruns);
 				} else {
 					have_data = false;
@@ -812,8 +821,8 @@ static void audio_datapath_i2s_blk_complete(uint32_t frame_start_ts_us, uint32_t
 					/* Ran dry — refill before resuming, else the next
 					 * packet gap starves I2S straight away. */
 					if (ctrl_blk.out.playing) {
-						/* DIAG: start of the refill mute. */
-						LOG_WRN("Jitter buffer ran dry - muting to refill");
+						/* DIAG: start of the refill mute. LOG_DBG, see refill log above. */
+						LOG_DBG("Jitter buffer ran dry - muting to refill");
 						/* Same reasoning as the refill-complete reset
 						 * above, applied at the other edge of the
 						 * mute/resume boundary.
