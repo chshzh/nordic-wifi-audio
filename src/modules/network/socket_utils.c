@@ -303,14 +303,22 @@ void socket_utils_set_target_ipv4(const struct in_addr *addr)
 	socket_utils_notify_target_ready();
 }
 
+#endif /* CONFIG_SOCKET_ROLE_CLIENT */
+
 void socket_utils_clear_target(void)
 {
+#if defined(CONFIG_SOCKET_ROLE_CLIENT)
 	serveraddr_set_signall = false;
 	target_ready_notified = false;
 	socket_ready = false;
+#endif
+	/* The UDP recv loop never breaks on a peer going away, so nothing else
+	 * clears these - leaving the server addressing a client that is gone.
+	 */
+	target_addr.sin_addr.s_addr = 0;
+	socket_connected_signall = false;
 	LOG_INF("Cleared socket target state");
 }
-#endif /* CONFIG_SOCKET_ROLE_CLIENT */
 
 int socket_utils_tx_data(uint8_t *data, size_t length)
 {

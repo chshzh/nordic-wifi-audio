@@ -406,17 +406,19 @@ int socket_utils_init(void)
 }
 
 #if defined(CONFIG_SOCKET_ROLE_CLIENT)
-/* The audio stream is downlink-only, so without this the client would send
- * nothing for minutes at a time whenever streaming stalls or is paused. That
- * has two consequences this addresses:
+/* The audio stream is downlink-only, so the client would otherwise send
+ * nothing for minutes at a time. That has two consequences this addresses:
  *   - the AP eventually disassociates the "inactive" station (reason 4), and
  *   - after any server-side socket teardown the server no longer knows the
  *     client's address, so it goes quiet and nothing on either side notices.
- * KEEP_ALIVE_CMD is only sent while frames aren't actually arriving - once
- * real audio is flowing there's other traffic (the frames themselves, ACKed
- * at the radio level) for the gateway to prove liveness from on its own side
- * (see streaming_liveness_refresh_work in wifi_audio_gateway/main.c), so
- * there's nothing useful this side needs to add.
+ * KEEP_ALIVE_CMD is sent UNCONDITIONALLY, including while streaming: it is the
+ * only proof the gateway has that this client still exists. The gateway cannot
+ * infer it locally - a power-cut peer sends no deauth, so socket_connected_signall
+ * and strm_state both stay stuck at "connected/streaming", and TX stalling is
+ * useless as a signal because it happens continuously during healthy streaming
+ * too (hardware-confirmed). Going silent here while streaming means a dead
+ * client is only purged by the nRF70's own ~300 s timer instead of
+ * net_event_app.c's 15 s eviction.
  */
 #define STREAM_WATCHDOG_PERIOD_SEC 5
 
@@ -438,15 +440,13 @@ static void stream_watchdog_handler(struct k_work *work)
 
 	if (frames_advancing) {
 		stall_logged = false;
-	} else {
-		if (user_request == REQ_PLAY && !stall_logged) {
-			LOG_WRN("No audio received for %d s - gateway is connected but not streaming",
-				STREAM_WATCHDOG_PERIOD_SEC);
-			stall_logged = true;
-		}
-		LOG_INF("Sending keepalive (seq=%u)", keepalive_seq);
-		send_keepalive_command(KEEP_ALIVE_CMD, keepalive_seq++);
+	} else if (user_request == REQ_PLAY && !stall_logged) {
+		LOG_WRN("No audio received for %d s - gateway is connected but not streaming",
+			STREAM_WATCHDOG_PERIOD_SEC);
+		stall_logged = true;
 	}
+
+	send_keepalive_command(KEEP_ALIVE_CMD, keepalive_seq++);
 
 	last_frame_count = frame_count;
 

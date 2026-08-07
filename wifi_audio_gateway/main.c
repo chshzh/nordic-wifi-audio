@@ -159,29 +159,6 @@ void streamctrl_handle_usb_audio_active(bool active)
 	usb_output_active = active;
 	gateway_reevaluate_stream();
 }
-
-/* The headset's stream watchdog only sends KEEP_ALIVE_CMD while it isn't
- * actively receiving frames, so once real streaming is flowing there is no
- * more uplink traffic at all - but net_event_app.c's client-liveness eviction
- * still needs proof the client is alive. While actually streaming, the
- * gateway is that proof itself: refresh liveness locally instead of relying
- * on the (now silent) client.
- */
-#define STREAMING_LIVENESS_REFRESH_PERIOD_SEC 5
-
-static struct k_work_delayable streaming_liveness_refresh_work;
-
-static void streaming_liveness_refresh_handler(struct k_work *work)
-{
-	ARG_UNUSED(work);
-
-	if (strm_state == STATE_STREAMING) {
-		net_event_app_client_seen();
-	}
-
-	k_work_reschedule(&streaming_liveness_refresh_work,
-			  K_SECONDS(STREAMING_LIVENESS_REFRESH_PERIOD_SEC));
-}
 #endif
 
 void socket_rx_handler(uint8_t *socket_rx_buf, size_t len)
@@ -481,12 +458,6 @@ int main(void)
 	ERR_CHK(ret);
 
 	net_event_app_init();
-
-#if defined(CONFIG_SOCKET_ROLE_SERVER)
-	k_work_init_delayable(&streaming_liveness_refresh_work, streaming_liveness_refresh_handler);
-	k_work_reschedule(&streaming_liveness_refresh_work,
-			  K_SECONDS(STREAMING_LIVENESS_REFRESH_PERIOD_SEC));
-#endif
 
 	/* Network LED driven by zego/bricks/ux via ZEGO_UX_WIFI_STATE_CHAN
 	 * (ROTATE = connecting)

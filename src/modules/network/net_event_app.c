@@ -54,15 +54,12 @@ static void pub_wifi_state(enum zego_ux_wifi_state state, enum zego_wifi_mode mo
  * reset on real client traffic (hardware-confirmed - see
  * zego/patches/hostap/README.md), so a client that goes silent isn't purged
  * for up to CONFIG_WIFI_NM_WPA_SUPPLICANT P2P_GO_MAX_INACTIVITY (default
- * 300 s). Something has to call net_event_app_client_seen() at least every
- * CLIENT_LIVENESS_TIMEOUT_SEC, from one of two sources depending on whether
- * audio is actually flowing (downlink-only, so the headset never generates
- * uplink traffic while genuinely streaming):
- *   - Idle/stalled: the headset's stream watchdog sends a command frame every
- *     5 s (wifi_audio_headset/main.c, stream_watchdog_handler()).
- *   - Actively streaming: the gateway refreshes its own liveness locally
- *     (wifi_audio_gateway/main.c, streaming_liveness_refresh_work) - the
- *     encoder producing frames each period is itself the proof of liveness.
+ * 300 s). The headset's stream watchdog therefore sends a command frame every
+ * 5 s unconditionally - including while streaming - and each one calls
+ * net_event_app_client_seen() here. That uplink is the ONLY proof the gateway
+ * has that the client still exists: a power-cut peer sends no deauth, so
+ * nothing local to the gateway (socket_connected_signall, strm_state, or TX
+ * stall timing) can distinguish it from a healthy one.
  * On timeout the station is force-disconnected via
  * NET_REQUEST_WIFI_AP_STA_DISCONNECT, which drives the normal
  * AP_STA_DISCONNECTED flow (audio stop, WPS PBC re-arm) in seconds instead of
@@ -219,6 +216,12 @@ void zego_on_net_event_wifi_ap_sta_disconnected(int station_count)
 		audio_system_encoder_stop();
 
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
+		/* Must precede streamctrl_handle_client_disconnect(): that re-evaluates
+		 * the stream against socket_connected_signall, so leaving it set here
+		 * would keep strm_state at STREAMING with the encoder already stopped,
+		 * and the next REQ_PLAY_CMD would be a no-op.
+		 */
+		socket_utils_clear_target();
 		streamctrl_handle_client_disconnect();
 #endif
 
