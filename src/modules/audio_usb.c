@@ -6,7 +6,6 @@
 
 #include "audio_usb.h"
 
-#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_uac2.h>
@@ -64,55 +63,52 @@ static bool terminal_in_enabled;
 #endif /* (CONFIG_STREAM_BIDIRECTIONAL) */
 
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
-/* Host audio-activity detection — treats sustained near-silence in the USB OUT
- * PCM stream as "host stopped playing" so the Wi-Fi stream can be paused
- * instead of forwarding silence indefinitely, and resumed as soon as real
- * audio returns. One data_recv_cb call carries ~1 ms of audio, so the block
- * count below doubles as a millisecond count.
+/* Host audio-activity detection — driven by the USB OUT terminal's
+ * enable/disable state (a real transport-level event), not PCM sample
+ * content. A quiet passage or digital silence within a track does not stop
+ * real USB isochronous OUT transfers, so treating sample silence as "host
+ * idle" was wrong: it paused the Wi-Fi stream (and dropped the headset's
+ * jitter buffer) on ordinary quiet passages, not just genuine host-idle
+ * periods. See terminal_update_cb() below for the actual trigger.
  */
-#define HOST_SILENCE_AMPLITUDE  32   /* samples at/below this magnitude count as silence */
-#define HOST_SILENCE_TIMEOUT_MS 1000 /* consecutive silent ms before pausing the stream */
+static bool host_audio_active;
 
-static bool host_audio_active = true;
-static uint32_t host_silent_ms;
+/* Hosts (macOS especially) restart the USB audio stream several times over a
+ * few seconds when playback is unpaused, closing and reopening the OUT
+ * terminal with sub-second ON periods. Acting on each OFF tears the Wi-Fi
+ * stream down and drains the headset's jitter buffer, so only a sustained OFF
+ * counts as "host stopped".
+ */
+#define HOST_AUDIO_OFF_DEBOUNCE_MS 1000
 
-static void host_audio_set_active(bool active)
+static void host_audio_off_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(host_audio_off_work, host_audio_off_handler);
+
+static void host_audio_apply_active(bool active)
 {
 	if (host_audio_active == active) {
 		return;
 	}
 
+	LOG_INF("USB audio output %s", active ? "ON" : "OFF");
 	host_audio_active = active;
-	host_silent_ms = 0;
 	streamctrl_handle_usb_audio_active(active);
 }
 
-static void host_audio_activity_check(const void *buf, size_t size)
+static void host_audio_off_handler(struct k_work *work)
 {
-	if (CONFIG_AUDIO_BIT_DEPTH_BITS != 16) {
-		/* Silence detection only implemented for 16-bit PCM. */
-		return;
-	}
+	ARG_UNUSED(work);
 
-	const int16_t *samples = buf;
-	size_t num_samples = size / sizeof(int16_t);
-	bool silent = true;
+	host_audio_apply_active(false);
+}
 
-	for (size_t i = 0; i < num_samples; i++) {
-		if (abs(samples[i]) > HOST_SILENCE_AMPLITUDE) {
-			silent = false;
-			break;
-		}
-	}
-
-	if (!silent) {
-		host_silent_ms = 0;
-		host_audio_set_active(true);
-		return;
-	}
-
-	if (host_audio_active && ++host_silent_ms >= HOST_SILENCE_TIMEOUT_MS) {
-		host_audio_set_active(false);
+static void host_audio_set_active(bool active)
+{
+	if (active) {
+		k_work_cancel_delayable(&host_audio_off_work);
+		host_audio_apply_active(true);
+	} else {
+		k_work_reschedule(&host_audio_off_work, K_MSEC(HOST_AUDIO_OFF_DEBOUNCE_MS));
 	}
 }
 
@@ -132,12 +128,10 @@ static void terminal_update_cb(const struct device *dev, uint8_t terminal, bool 
 	if (terminal == TERMINAL_ID_OUT) {
 		terminal_out_enabled = enabled;
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
-		if (!enabled) {
-			/* Host closed the OUT stream entirely — a stronger signal than
-			 * silence, so stop the Wi-Fi stream immediately.
-			 */
-			host_audio_set_active(false);
-		}
+		/* The OUT terminal being enabled/disabled is the real transport-level
+		 * signal for "host is/isn't sending audio" — see comment above.
+		 */
+		host_audio_set_active(enabled);
 #endif
 	}
 #if (CONFIG_STREAM_BIDIRECTIONAL)
@@ -198,7 +192,10 @@ static void data_recv_cb(const struct device *dev, uint8_t terminal, void *buf, 
 	}
 
 #if defined(CONFIG_SOCKET_ROLE_SERVER)
-	host_audio_activity_check(buf, size);
+	/* Wi-Fi stream activity now tracks the USB OUT terminal's enable state
+	 * directly (see terminal_update_cb()), not PCM content — nothing to do
+	 * with received sample data here.
+	 */
 #endif
 
 	ret = data_fifo_pointer_first_vacant_get(fifo_rx, &data_in, K_NO_WAIT);
