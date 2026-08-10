@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-07-15-54 |
+| Version | 2026-08-10-14-00 |
 | PRD Version | 2026-08-07-15-52 |
 | NCS Version | v3.3.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK, nRF54LM20DK + nRF7002EB2 (build) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-10-14-00 | Raised the headset's jitter-buffer target (`PREBUF_TARGET_BLKS`, `audio_datapath.c`) from 10 to 30 blocks - 10 was re-tested as measurably less audibly clear than 30 on the current network/channel-3 P2P GO configuration. See "Jitter Buffer Latency" below. |
 | 2026-08-07-15-54 | Updated to PRD v2026-08-07-15-52. Renamed `enum audio_user_request { AUDIO_PLAY, AUDIO_PAUSE }` → `{ REQ_PLAY, REQ_PAUSE }` and the wire commands `AUDIO_START_CMD`/`AUDIO_STOP_CMD` → `REQ_PLAY_CMD`/`REQ_PAUSE_CMD` (0x00/0x01 unchanged); the separate `stream_paused_by_user` flag documented below is gone — superseded by the `user_request` enum itself, which already distinguishes an explicit pause from a USB-idle auto-pause. Keepalive redesigned: the headset now sends `KEEP_ALIVE_CMD` (0x02) unconditionally every 5 s with an incrementing sequence number — not just as a stalled-stream nudge — and the gateway replies with `KEEP_ALIVE_ACK_CMD` (0x03, echoing the sequence). This is the sole proof-of-life signal a departing client leaves behind (see `docs/dev-specs/network-module.md` for the gateway-side 15 s liveness eviction it feeds). Reduced the headset's jitter-buffer target (`PREBUF_TARGET_BLKS`, `audio_datapath.c`) from 80 to 10 blocks (~70 ms less steady-state audio latency) based on real hardware gap measurements via the new `audio_rx_stats` shell command (`wifi_audio_rx.c`) — see "Jitter Buffer Latency" below. |
 | 2026-08-07-09-29 | Replaced the gateway's boolean `stream_paused_by_user` with an explicit `enum audio_user_request { AUDIO_PLAY, AUDIO_PAUSE }` and a single `gateway_reevaluate_stream()` that AND-gates streaming on `user_request == AUDIO_PLAY`, USB host output being active, and a client being connected. The local PLAY_PAUSE button now also sends `AUDIO_START_CMD`/`AUDIO_STOP_CMD` to the headset (previously only the headset's button notified the gateway — the gateway's button was a one-sided local toggle), so `user_request`-equivalent intent stays in sync on both sides. Added `streamctrl_handle_gateway_command()` on the headset (`CONFIG_SOCKET_ROLE_CLIENT`) plus command-frame recognition in `wifi_audio_rx_data_handler()` so the headset can receive these gateway-originated commands over the same UDP command channel. See "Audio Streaming State Machine" below. |
 | 2026-08-07-09-00 | Replaced PCM-content-based USB host-idle detection with transport-level detection: `host_audio_active` now mirrors the USB OUT terminal's enable/disable state (`terminal_update_cb()`) directly instead of a sample-amplitude timeout (`host_audio_activity_check()`, removed). Real USB isochronous OUT transfers don't stop during a quiet passage or in-track silence, so the old content-based heuristic was pausing the Wi-Fi stream (and draining the headset's jitter buffer) on ordinary quiet music, not just genuine host-idle periods — likely the dominant cause of `Jitter buffer ran dry` events seen throughout testing. See "USB Host Audio-Activity Detection" below. |
@@ -316,6 +317,10 @@ inter-arrival gap directly) measured real gaps up to 55 ms correlated with
 `KEEP_ALIVE_ACK_CMD` receipt; 10 was confirmed clear by ear on hardware once
 that contention was accounted for. See "Cost of this design" above for the
 keepalive/latency tradeoff this interacts with.
+
+Raised from 10 to 30 blocks (2026-08-10): the goal is still the lowest
+latency that stays audibly clear, but 30 measurably reduced jitter versus 10
+on the current network/channel-3 P2P GO configuration.
 
 
 

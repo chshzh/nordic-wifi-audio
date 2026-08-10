@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Project | Nordic Wi-Fi Audio Demo |
-| Version | 2026-08-07-15-58 |
+| Version | 2026-08-10-14-00 |
 | PRD Version | 2026-08-07-15-52 |
 | NCS Version | v3.4.0 |
 | Target Board(s) | nRF5340 Audio DK + nRF7002EK (P0); nRF7002DK (P1, gateway only); nRF54LM20DK + nRF7002EB2 (P1, gateway only) |
@@ -15,6 +15,7 @@
 
 | Version | Summary of changes |
 |---|---|
+| 2026-08-10-14-00 | Code-driven sync (PRD unchanged). P2P GO now honors the configured 2.4GHz channel (`CONFIG_ZEGO_WIIF_SOFTAP_CHANNEL=3`, chosen after an on-site scan to avoid a dominant nearby network) instead of always auto-selecting - the underlying zego/bricks/network wiring fix and a hardware-confirmed finding that 5GHz P2P GO is unsupported on this driver are documented in that repo's own history, not here. Raised the headset's jitter-buffer target from 10 to 30 blocks after further hardware listening tests. See [audio-pipeline.md](audio-pipeline.md) Changelog for full detail. |
 | 2026-08-07-15-58 | Updated to PRD v2026-08-07-15-52 (code-driven sync, 4 undeclared commits/in-progress changes since 2026-08-04-13-08). Gateway boards gained a physical Play/Pause button (idx 1) mirroring the Headset; protocol renamed `AUDIO_PLAY`/`AUDIO_START_CMD` → `REQ_PLAY`/`REQ_PLAY_CMD` (and `AUDIO_PAUSE`/`AUDIO_STOP_CMD` → `REQ_PAUSE`/`REQ_PAUSE_CMD`); fixed a stale-socket-target bug that could leave a reconnecting client's `REQ_PLAY_CMD` silently ignored after the 15 s liveness eviction fired; reduced the headset's jitter-buffer latency from ~80 ms to ~10 ms based on real hardware gap measurements. See [audio-pipeline.md](audio-pipeline.md) and [network-module.md](network-module.md) Changelogs for full detail. |
 | 2026-08-04-13-08 | **Bug fix (found via hardware test):** P2P_GO gateway's LED 0 stayed in ROTATE after a client connected. Fixed in `zego/bricks/network` (mode field in `zego_on_net_event_wifi_ap_sta_connected()`'s weak default was hardcoded to SOFTAP) and removed this app's now-redundant override of that hook. See [network-module.md](network-module.md) Changelog. |
 | 2026-08-04-12-20 | **Bug fix (found via hardware test):** `CONFIG_ZEGO_FACTORY_RESET_BUTTON_IDX` on nRF5340 Audio DK was left at its default (0) instead of matching `CONFIG_ZEGO_UX_BUTTON_IDX=4` (BTN5) — the 10 s hold silently did nothing on that board. See [board-init-module.md](board-init-module.md) and [ui-module.md](ui-module.md) Changelogs. |
