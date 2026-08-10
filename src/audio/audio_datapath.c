@@ -109,7 +109,7 @@ int numDec = 0;                              /*Number of decoded samples or @ref
  * glitchy (constant fade in/out, confirmed via LOG_DBG "ran dry"/"refilled").
  * If audible glitches correlate with KEEP_ALIVE_ACK_CMD receipt, raise this or
  * lower the keepalive frequency rather than guessing - see audio_rx_stats. */
-#define PREBUF_TARGET_BLKS 10
+#define PREBUF_TARGET_BLKS 30
 
 enum drift_comp_state {
 	DRIFT_STATE_INIT,   /* Waiting for data to be received */
