@@ -24,7 +24,7 @@ manifest:
     # Common app modules and libraries
     - name: zego
       path: zego
-      revision: v3.4.0.3
+      revision: v3.4.0.4
       remote: chshzh
 
     # # Add more sibling projects as needed:
