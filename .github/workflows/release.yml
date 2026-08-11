@@ -160,14 +160,31 @@ jobs:
         working-directory: app-workspace/nordic-wifi-audio
         run: |
           BUILD_LOG="${{ matrix.config.build_dir }}/build.log"
-          ROM_USAGE="$(awk '/^[[:space:]]*FLASH:/ {
-            n=$2+0; if (n>max_f) { max_f=n; line_f=$2 " " $3 " / " $4 " " $5 " (" $6 ")" }
+          to_kb() {
+            awk -v v="$1" -v u="$2" 'BEGIN {
+              if (u == "B") v = v / 1024
+              else if (u == "MB") v = v * 1024
+              printf "%.2f KB", v
+            }'
+          }
+          ROM_RAW="$(awk '/^[[:space:]]*FLASH:/ {
+            n=$2+0; if (n>max_f) { max_f=n; line_f=$2 " " $3 " " $4 " " $5 " " $6 }
           } END { print line_f }' "$BUILD_LOG")"
-          RAM_USAGE="$(awk '/^[[:space:]]*RAM:/ {
-            n=$2+0; if (n>max_r) { max_r=n; line_r=$2 " " $3 " / " $4 " " $5 " (" $6 ")" }
+          RAM_RAW="$(awk '/^[[:space:]]*RAM:/ {
+            n=$2+0; if (n>max_r) { max_r=n; line_r=$2 " " $3 " " $4 " " $5 " " $6 }
           } END { print line_r }' "$BUILD_LOG")"
-          : "${ROM_USAGE:=n/a}"
-          : "${RAM_USAGE:=n/a}"
+          if [ -n "$ROM_RAW" ]; then
+            read -r uv uu tv tu pct <<< "$ROM_RAW"
+            ROM_USAGE="$(to_kb "$uv" "$uu") / $(to_kb "$tv" "$tu") ($pct)"
+          else
+            ROM_USAGE="n/a"
+          fi
+          if [ -n "$RAM_RAW" ]; then
+            read -r uv uu tv tu pct <<< "$RAM_RAW"
+            RAM_USAGE="$(to_kb "$uv" "$uu") / $(to_kb "$tv" "$tu") ($pct)"
+          else
+            RAM_USAGE="n/a"
+          fi
           printf "ROM_USAGE=%s\nRAM_USAGE=%s\n" "$ROM_USAGE" "$RAM_USAGE" > usage.txt
           echo "${{ matrix.config.name }}  ROM: $ROM_USAGE | RAM: $RAM_USAGE"
 
