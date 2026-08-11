@@ -388,6 +388,59 @@ west flash -d build_headset_nrf5340audiodk
 
 ---
 
+## Known Issues
+
+### KI-1 — P2P mode: audio stops permanently after 5–30 min (suspected nRF70 RPU stall)
+
+**Status:** Open — deferred to a later NCS version. Last investigated 2026-08-10 on NCS `v3.4.0-99553055607b` / Zephyr `v4.4.0-bf801e4e3d19`, zego `v3.4.0.3`.
+
+**Symptom.** During long-duration streaming, audio stops and never recovers. The Headset logs `No audio received for 5 s - gateway is connected but not streaming` exactly once, then goes completely silent — no further application logs, Audio LED frozen solid ON (= "play intended, not actually playing"). The Gateway keeps running, stops receiving keepalives, and after 15 s its client-liveness evictor force-disconnects the "stale" station — that eviction is a *downstream symptom*, not the cause.
+
+**Scope — P2P only.**
+
+| Mode | Result |
+|---|---|
+| STA (`zego_wifi_mode sta`) | Streams overnight, no failure |
+| P2P (GO + GC) | Fails after ~5–30 min |
+
+Both modes run the **same binary** (mode is a runtime NVS setting, not a build option), which rules out application logic, the audio pipeline, and `socket_utils` — all of those are mode-independent.
+
+**Evidence — live capture while hung, without resetting the boards.** `kernel thread list` run twice ~10 s apart, diffed on the per-thread cycle counter:
+
+- **Headset:** `AUDIO_DATAPATH`, `SOCKET`, `CS47L63`, `rx_q[0]` **and** the nRF70 driver's own `nrf70_intr_wq` / `nrf70_bh_wq` workqueues all at **0 cycles** — the Wi-Fi driver stopped servicing the nRF7002 entirely.
+- **Gateway:** `ENCODER` / `SOCKET` stalled, but `nrf70_intr_wq` / `nrf70_bh_wq` / `hostap_handler` still ticking normally.
+- Both shells fully responsive, CPUs mostly idle — neither board is locked up or spinning.
+
+Frozen *driver* workqueues place the fault **below** the application, consistent with an nRF70 RPU stall reached only via the P2P code path.
+
+**No automatic recovery is possible in this build.** The driver's RPU recovery (iface down/up → RPU cold boot) cannot be enabled here:
+
+```
+config NRF_WIFI_LOW_POWER          # zephyr/drivers/wifi/nrf_wifi/Kconfig.nrfwifi
+	depends on !NRF70_RADIO_TEST && !NRF70_AP_MODE
+config NRF_WIFI_RPU_RECOVERY
+	depends on NRF_WIFI_LOW_POWER
+```
+
+The `wifi-p2p` snippet sets `CONFIG_NRF70_AP_MODE=y` → forces `NRF_WIFI_LOW_POWER=n` → forces `NRF_WIFI_RPU_RECOVERY=n`. **Any AP/P2P build structurally cannot have RPU recovery**; STA-only builds get it by default. Setting `CONFIG_NRF_WIFI_RPU_RECOVERY=y` in an overlay is **silently ignored** — no warning, and the symbol is absent from `.config` entirely. The nRF70 watchdog IRQ still fires but is swallowed and re-armed forever in `hal_rpu_process_wdog()`, which is why the hang is permanent *and* silent.
+
+> Consequently the pre-existing `CONFIG_NRF_WIFI_LOW_POWER=n` in both role overlays is a **no-op** in P2P builds (`NRF70_AP_MODE` already forces it off). It only takes effect in STA-only builds — where it also disables RPU recovery.
+
+**Triage recipe for next time**
+
+1. Do **not** reset or power-cycle — the shell stays alive and is the best evidence source.
+2. Run `kernel thread list` twice ~10 s apart and diff cycle counts to separate genuinely stuck threads from merely idle ones. (`CONFIG_KERNEL_SHELL`, `THREAD_MONITOR`, `THREAD_NAME`, `THREAD_RUNTIME_STATS` are already enabled — no rebuild needed.)
+3. Avoid `wifi` shell subcommands while hung: they call into the wedged driver and can take the shell down with them.
+
+**Candidate next steps**
+
+- App-level recovery: on stall (no audio **and** no `KEEP_ALIVE_ACK` for N s while `REQ_PLAY`), perform an explicit `net_if_down()` / `net_if_up()` or `sys_reboot()` — replicates what RPU recovery would do, without the Kconfig dependency.
+- Re-test on a newer NCS / nRF70 firmware. If it persists, escalate to Nordic as a P2P-mode RPU defect — the RPU's activity/`inactive_time` accounting in P2P roles is already known-suspect on this platform (see [network-module.md](docs/dev-specs/network-module.md)).
+
+**Secondary observation.** `hostap_handler` stack usage sits at 87 % (Gateway) / 95 % (Headset) of its 8192 B stack. Not implicated in this hang, but close enough to overflow to be worth watching independently.
+
+---
+
 ## Documentation
 
 The full design documentation lives under `docs/`. Start with [docs/dev-specs/0-overview.md](docs/dev-specs/0-overview.md), which maps every PRD requirement to the spec file that implements it and provides an architecture summary.
